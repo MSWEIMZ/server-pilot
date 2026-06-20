@@ -5,6 +5,9 @@
     SSH execution · GPU monitoring · Training tracker · File transfer
   </p>
   <p align="center">
+    <a href="README.md">English</a> | <a href="README_CN.md">中文</a>
+  </p>
+  <p align="center">
     <img src="https://img.shields.io/badge/Python-3.8+-blue?logo=python&logoColor=white" />
     <img src="https://img.shields.io/badge/Codex-Skill-green" />
     <img src="https://img.shields.io/badge/License-MIT-yellow" />
@@ -44,7 +47,7 @@
      python train_r2plus1d_l4_3d_improved.py --num_classes 16 ...
 
 💻 System:
-  23:56:53 up 210 days, 10:58, load average: 5.77, 6.10, 5.31
+  23:56:53 up 210 days, load average: 5.77, 6.10, 5.31
   Mem: 755Gi total, 41Gi used, 53Gi free
 
 ============================================================
@@ -54,18 +57,15 @@
 
 ### 1. Install
 
-Copy the `server-pilot` folder to your Codex skills directory:
-
 ```bash
-# Clone the repo
 git clone https://github.com/MSWEIMZ/server-pilot.git ~/.codex/skills/server-pilot
 ```
 
 ### 2. Configure
 
 ```bash
-# Copy the example config
-cp ~/.codex/skills/server-pilot/scripts/server_config.example.json    ~/.codex/skills/server-pilot/scripts/server_config.json
+cp ~/.codex/skills/server-pilot/scripts/server_config.example.json \
+   ~/.codex/skills/server-pilot/scripts/server_config.json
 ```
 
 Edit `server_config.json` with your server info:
@@ -89,42 +89,23 @@ Just talk to Codex naturally:
 >
 > 🗣️ "Is my training still running?"
 
-Or run directly from terminal:
+Or run from terminal:
 
 ```bash
-# Full status report
-python scripts/server_monitor.py
-
-# GPU only
-python scripts/server_monitor.py --gpu
-
-# Training processes only
-python scripts/server_monitor.py --train
-
-# JSON output
-python scripts/server_monitor.py --json
-
-# Continuous monitoring (refresh every 30s)
-python scripts/server_monitor.py --watch
-
-# Custom interval
+python scripts/server_monitor.py              # Full report
+python scripts/server_monitor.py --gpu        # GPU only
+python scripts/server_monitor.py --train      # Training only
+python scripts/server_monitor.py --json       # JSON output
+python scripts/server_monitor.py --watch      # Continuous (30s)
 python scripts/server_monitor.py --watch --interval 60
 ```
 
 ## 🛠️ Remote Commands
 
 ```bash
-# Run any command
 python scripts/ssh_exec.py "nvidia-smi"
-python scripts/ssh_exec.py "df -h && free -m"
-
-# JSON output
-python scripts/ssh_exec.py --json "uptime"
-
-# Upload file
+python scripts/ssh_exec.py --json "df -h"
 python scripts/ssh_exec.py --upload ./model.pt /root/autodl-tmp/
-
-# Download file
 python scripts/ssh_exec.py --download /root/logs/train.log ./train.log
 ```
 
@@ -139,7 +120,8 @@ python scripts/ssh_exec.py --download /root/logs/train.log ./train.log
 ```
 server-pilot/
 ├── SKILL.md                          # Codex skill descriptor
-├── README.md                         # This file
+├── README.md                         # English docs
+├── README_CN.md                      # 中文文档
 ├── .gitignore
 ├── agents/
 │   └── openai.yaml                   # Codex UI metadata
@@ -152,7 +134,7 @@ server-pilot/
 
 ## 🤝 Contributing
 
-Issues and PRs welcome! Some ideas:
+Issues and PRs welcome!
 
 - [ ] Multi-server support
 - [ ] Training loss/accuracy log parsing
