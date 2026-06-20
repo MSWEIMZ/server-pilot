@@ -93,10 +93,7 @@ a{color:var(--cyan2);text-decoration:none}
 
 /* Training */
 .train-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(480px,1fr));gap:16px}
-.train-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px;cursor:pointer;transition:border-color 0.2s,transform 0.15s}
-.train-card:hover{border-color:var(--purple);transform:translateY(-2px)}
-.train-desc{font-size:12px;color:var(--cyan2);background:rgba(34,211,238,0.08);border-radius:8px;padding:6px 10px;margin-bottom:10px;display:flex;align-items:center;gap:6px;line-height:1.4}
-.train-desc::before{content:"\1F4CB";font-size:13px}
+.train-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px}
 .train-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .train-pid{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--purple2);font-size:14px}
 .train-time{font-size:12px;color:var(--text3);display:flex;align-items:center;gap:6px}
@@ -142,45 +139,12 @@ a{color:var(--cyan2);text-decoration:none}
 /* Footer */
 .footer{text-align:center;padding:24px;color:var(--text3);font-size:12px;border-top:1px solid var(--border);margin-top:20px}
 
-/* ===== Modal Detail Popup ===== */
-.modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.65);backdrop-filter:blur(6px);z-index:1000;justify-content:center;align-items:center}
-.modal-overlay.active{display:flex}
-.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:16px;width:90%;max-width:900px;max-height:85vh;display:flex;flex-direction:column;box-shadow:var(--shadow-lg);animation:modalIn 0.25s ease}
-@keyframes modalIn{from{opacity:0;transform:translateY(24px) scale(0.97)}to{opacity:1;transform:none}}
-.modal-header{display:flex;justify-content:space-between;align-items:center;padding:18px 24px;border-bottom:1px solid var(--border)}
-.modal-title{font-size:16px;font-weight:700;display:flex;align-items:center;gap:10px}
-.modal-title .pid-tag{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--purple2);background:rgba(139,92,246,0.12);padding:3px 10px;border-radius:6px}
-.modal-close{background:transparent;border:none;color:var(--text3);font-size:22px;cursor:pointer;padding:4px 8px;border-radius:6px;transition:all 0.15s;line-height:1}
-.modal-close:hover{background:var(--bg4);color:var(--text)}
-.modal-tabs{display:flex;padding:0 24px;border-bottom:1px solid var(--border);gap:0}
-.modal-tab{padding:12px 20px;font-size:13px;font-weight:500;color:var(--text3);cursor:pointer;border:none;background:transparent;border-bottom:2px solid transparent;transition:all 0.2s;font-family:inherit}
-.modal-tab:hover{color:var(--text2)}
-.modal-tab.active{color:var(--cyan2);border-bottom-color:var(--cyan)}
-.modal-body{flex:1;overflow-y:auto;padding:0}
-.tab-pane{display:none;height:100%}
-.tab-pane.active{display:block}
-.log-area{font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;padding:18px 24px;white-space:pre-wrap;word-break:break-all;color:var(--text2);min-height:200px;max-height:60vh;overflow-y:auto}
-.log-area .hl-error{color:var(--red2);font-weight:600}
-.log-area .hl-warn{color:var(--orange2);font-weight:600}
-.log-area .hl-metric{color:var(--cyan2);font-weight:500}
-.detail-grid{display:grid;grid-template-columns:140px 1fr;gap:0;font-size:13px}
-.detail-grid .dk{padding:10px 16px;color:var(--text3);border-bottom:1px solid rgba(42,53,80,0.4);font-weight:500;white-space:nowrap}
-.detail-grid .dv{padding:10px 16px;border-bottom:1px solid rgba(42,53,80,0.4);font-family:'JetBrains Mono',monospace;font-size:12px;word-break:break-all;color:var(--text)}
-.log-empty{display:flex;align-items:center;justify-content:center;height:200px;color:var(--text3);font-size:13px}
-.modal-loading{display:flex;align-items:center;justify-content:center;height:200px;color:var(--text3);font-size:13px}
-.modal-loading::before{content:'';width:20px;height:20px;border:2px solid var(--border2);border-top-color:var(--cyan);border-radius:50%;animation:spin 0.8s linear infinite;margin-right:10px}
-@keyframes spin{to{transform:rotate(360deg)}}
-
 /* Responsive */
 @media(max-width:768px){
   .stats-row{grid-template-columns:repeat(2,1fr)}
   .main{padding:16px}
   .header{padding:12px 16px;flex-wrap:wrap;gap:10px}
   .gpu-metrics{grid-template-columns:repeat(2,1fr)}
-  .modal{width:95%;max-height:90vh}
-  .modal-tabs{padding:0 12px}
-  .modal-tab{padding:10px 12px;font-size:12px}
-  .log-area{padding:12px;font-size:11px}
 }
 </style>
 </head>
@@ -249,46 +213,19 @@ a{color:var(--cyan2);text-decoration:none}
   </div>
 </div>
 
-<!-- Detail Modal -->
-<div class="modal-overlay" id="modalOverlay">
-  <div class="modal">
-    <div class="modal-header">
-      <div class="modal-title"><span data-i18n="procDetail">Process Detail</span> <span class="pid-tag" id="modalPid">PID --</span></div>
-      <button class="modal-close" onclick="closeModal()">&times;</button>
-    </div>
-    <div class="modal-tabs">
-      <button class="modal-tab active" data-tab="stdout" onclick="switchTab('stdout')">stdout</button>
-      <button class="modal-tab" data-tab="stderr" onclick="switchTab('stderr')">stderr</button>
-      <button class="modal-tab" data-tab="detail" onclick="switchTab('detail')" data-i18n="tabDetail">Detail</button>
-    </div>
-    <div class="modal-body">
-      <div class="tab-pane active" id="pane-stdout"><div class="modal-loading" data-i18n="loading">Loading...</div></div>
-      <div class="tab-pane" id="pane-stderr"><div class="modal-loading" data-i18n="loading">Loading...</div></div>
-      <div class="tab-pane" id="pane-detail"><div class="modal-loading" data-i18n="loading">Loading...</div></div>
-    </div>
-  </div>
-</div>
-
 <div class="footer">Server Pilot &mdash; <a href="https://github.com/MSWEIMZ/server-pilot">github.com/MSWEIMZ/server-pilot</a></div>
 
-<script>const i18n={
-  zh:{refresh:"刷新",gpuUtil:"GPU 利用率",vram:"显存使用",training:"训练任务",uptime:"运行时间",gpuStatus:"GPU 状态",trainingProcs:"训练进程",systemRes:"系统资源",memory:"内存",disk:"磁盘",network:"网络",topProcs:"进程排行",loading:"加载中...",noGpu:"未检测到 GPU",noTrain:"没有训练进程",temp:"温度",power:"功耗",util:"利用率",fan:"风扇",epoch:"轮次",loss:"损失",acc:"准确率",lr:"学习率",step:"步数",eta:"剩余时间",elapsed:"运行",cpu:"CPU",vram2:"显存",user:"用户",cmd:"命令",procDetail:"进程详情",tabDetail:"详情",tabStdout:"标准输出",tabStderr:"标准错误",logEmpty:"暂无日志",desc:"描述",cmdline:"命令行",status:"状态",openFiles:"打开文件",envVars:"环境变量",ioStats:"IO 统计",clickDetail:"点击查看详情"},
-  en:{refresh:"Refresh",gpuUtil:"GPU Util",vram:"VRAM Usage",training:"Training",uptime:"Uptime",gpuStatus:"GPU Status",trainingProcs:"Training Processes",systemRes:"System Resources",memory:"Memory",disk:"Disk",network:"Network",topProcs:"Top Processes",loading:"Loading...",noGpu:"No GPU detected",noTrain:"No training processes",temp:"Temp",power:"Power",util:"Util",fan:"Fan",epoch:"Epoch",loss:"Loss",acc:"Acc",lr:"LR",step:"Step",eta:"ETA",elapsed:"Elapsed",cpu:"CPU",vram2:"VRAM",user:"User",cmd:"Command",procDetail:"Process Detail",tabDetail:"Detail",tabStdout:"Stdout",tabStderr:"Stderr",logEmpty:"No log output",desc:"Description",cmdline:"Command Line",status:"Status",openFiles:"Open Files",envVars:"Environment",ioStats:"IO Stats",clickDetail:"Click for details"}
+<script>
+const i18n={
+  zh:{refresh:"刷新",gpuUtil:"GPU 利用率",vram:"显存使用",training:"训练任务",uptime:"运行时间",gpuStatus:"GPU 状态",trainingProcs:"训练进程",systemRes:"系统资源",memory:"内存",disk:"磁盘",network:"网络",topProcs:"进程排行",loading:"加载中...",noGpu:"未检测到 GPU",noTrain:"没有训练进程",temp:"温度",power:"功耗",util:"利用率",fan:"风扇",epoch:"轮次",loss:"损失",acc:"准确率",lr:"学习率",step:"步数",eta:"剩余时间",elapsed:"运行",cpu:"CPU",vram2:"显存",user:"用户",cmd:"命令"},
+  en:{refresh:"Refresh",gpuUtil:"GPU Util",vram:"VRAM Usage",training:"Training",uptime:"Uptime",gpuStatus:"GPU Status",trainingProcs:"Training Processes",systemRes:"System Resources",memory:"Memory",disk:"Disk",network:"Network",topProcs:"Top Processes",loading:"Loading...",noGpu:"No GPU detected",noTrain:"No training processes",temp:"Temp",power:"Power",util:"Util",fan:"Fan",epoch:"Epoch",loss:"Loss",acc:"Acc",lr:"LR",step:"Step",eta:"ETA",elapsed:"Elapsed",cpu:"CPU",vram2:"VRAM",user:"User",cmd:"Command"}
 };
 let lang="zh";
 function t(k){return(i18n[lang]||i18n.zh)[k]||k}
-function setLang(l){
-  lang=l;
-  document.getElementById("btnZh").classList.toggle("active",l==="zh");
-  document.getElementById("btnEn").classList.toggle("active",l==="en");
-  document.querySelectorAll("[data-i18n]").forEach(e=>{const k=e.getAttribute("data-i18n");if(i18n[l]&&i18n[l][k])e.textContent=i18n[l][k]});
-  fetchData()
-}
+function setLang(l){lang=l;document.getElementById("btnZh").classList.toggle("active",l==="zh");document.getElementById("btnEn").classList.toggle("active",l==="en");document.querySelectorAll("[data-i18n]").forEach(e=>{const k=e.getAttribute("data-i18n");if(i18n[l]&&i18n[l][k])e.textContent=i18n[l][k]});fetchData()}
 function fmtBytes(mb){return mb>=1024?(mb/1024).toFixed(1)+" GB":mb+" MB"}
 function tempCls(s){return s>=80?"hot":s>=60?"warm":"cool"}
 function tempLabel(s){return s>=80?(lang==="zh"?"过热":"Hot"):s>=60?(lang==="zh"?"偏高":"Warm"):(lang==="zh"?"正常":"Cool")}
-
-function escHtml(s){if(!s)return'';var d=document.createElement('div');d.textContent=s;return d.innerHTML}
 
 function renderStats(d){
   const g=d.gpus||[];
@@ -299,12 +236,13 @@ function renderStats(d){
     document.getElementById("stVram").textContent=fmtBytes(g0.mem_u);
     document.getElementById("stVramSub").textContent=fmtBytes(g0.mem_t)+" total";
   }
-  const tr=d.training||[];
-  document.getElementById("stTrain").textContent=tr.length;
-  document.getElementById("stTrainSub").textContent=tr.length>0?tr.map(p=>p.elapsed).join(", "):(lang==="zh"?"无训练":"None");
+  const t=d.training||[];
+  document.getElementById("stTrain").textContent=t.length;
+  document.getElementById("stTrainSub").textContent=t.length>0?t.map(p=>p.elapsed).join(", "):(lang==="zh"?"无训练":"None");
   const s=d.system||{};
   if(s.uptime){
     const m=s.uptime.match(/up\s+(.+?),\s+\d+\s+user/);
+    document.getElementById("stUptime").textContent?document.getElementById("stUptime").textContent="--":0;
     if(m) document.getElementById("stUptime").textContent=m[1].trim().split(",").pop().trim().replace(/\s+/g," ");
     else document.getElementById("stUptime").textContent=s.uptime.substring(0,12);
   }
@@ -316,27 +254,24 @@ function renderGPU(gpus){
   if(!gpus||!gpus.length){el.innerHTML='<div class="empty">'+t("noGpu")+'</div>';return}
   el.innerHTML=gpus.map(g=>{
     const tc=tempCls(g.temp);
-    return '<div class="gpu-card">'+
-      '<div class="gpu-header"><span class="gpu-name">GPU '+g.idx+': '+g.name+'</span><span class="gpu-badge '+tc+'">'+g.temp+'&deg;C &middot; '+tempLabel(g.temp)+'</span></div>'+
-      '<div class="gpu-metrics">'+
-        '<div class="gm"><div class="v" style="color:var(--'+(tc==='hot'?'red2':tc==='warm'?'orange2':'green2')+')">'+g.temp+'&deg;</div><div class="k">'+t("temp")+'</div></div>'+
-        '<div class="gm"><div class="v">'+g.pwr+'W</div><div class="k">'+t("power")+'</div></div>'+
-        '<div class="gm"><div class="v">'+g.util+'%</div><div class="k">'+t("util")+'</div></div>'+
-        '<div class="gm"><div class="v">'+(g.fan||'-')+'%</div><div class="k">'+t("fan")+'</div></div>'+
-      '</div>'+
-      '<div class="bar-wrap"><div class="bar-top"><span>VRAM</span><span>'+fmtBytes(g.mem_u)+' / '+fmtBytes(g.mem_t)+'</span></div><div class="bar"><div class="bar-inner mem" style="width:'+g.mem_pct+'%">'+g.mem_pct+'%</div></div></div>'+
-      '<div class="bar-wrap" style="margin-top:8px"><div class="bar-top"><span>'+t("util")+'</span><span>'+g.util+'%</span></div><div class="bar"><div class="bar-inner util" style="width:'+g.util+'%">'+g.util+'%</div></div></div>'+
-    '</div>'}).join("");
+    return `<div class="gpu-card">
+      <div class="gpu-header"><span class="gpu-name">GPU ${g.idx}: ${g.name}</span><span class="gpu-badge ${tc}">${g.temp}&deg;C &middot; ${tempLabel(g.temp)}</span></div>
+      <div class="gpu-metrics">
+        <div class="gm"><div class="v" style="color:var(--${tc==='hot'?'red2':tc==='warm'?'orange2':'green2'})">${g.temp}&deg;</div><div class="k">${t("temp")}</div></div>
+        <div class="gm"><div class="v">${g.pwr}W</div><div class="k">${t("power")}</div></div>
+        <div class="gm"><div class="v">${g.util}%</div><div class="k">${t("util")}</div></div>
+        <div class="gm"><div class="v">${g.fan||'-'}%</div><div class="k">${t("fan")}</div></div>
+      </div>
+      <div class="bar-wrap"><div class="bar-top"><span>VRAM</span><span>${fmtBytes(g.mem_u)} / ${fmtBytes(g.mem_t)}</span></div><div class="bar"><div class="bar-inner mem" style="width:${g.mem_pct}%">${g.mem_pct}%</div></div></div>
+      <div class="bar-wrap" style="margin-top:8px"><div class="bar-top"><span>${t("util")}</span><span>${g.util}%</span></div><div class="bar"><div class="bar-inner util" style="width:${g.util}%">${g.util}%</div></div></div>
+    </div>`}).join("");
 }
 
-function renderTraining(procs,logs,tasks){
+function renderTraining(procs,logs){
   const el=document.getElementById("trainGrid");
   if(!procs||!procs.length){el.innerHTML='<div class="empty">'+t("noTrain")+'</div>';return}
-  const taskMap={};
-  if(tasks&&tasks.length){tasks.forEach(tk=>{taskMap[tk.pid]=tk})}
   el.innerHTML=procs.map(p=>{
     const lg=(logs&&logs[p.pid])||{};
-    const tk=taskMap[p.pid]||null;
     const stats=[];
     if(lg.epoch)stats.push([t("epoch"),lg.epoch]);
     if(lg.loss!==undefined)stats.push([t("loss"),typeof lg.loss==="number"?lg.loss.toFixed(4):lg.loss]);
@@ -344,162 +279,63 @@ function renderTraining(procs,logs,tasks){
     if(lg.lr)stats.push([t("lr"),lg.lr]);
     if(lg.step)stats.push([t("step"),lg.step]);
     if(lg.eta)stats.push([t("eta"),lg.eta]);
-    const descHtml=tk&&tk.description?'<div class="train-desc">'+escHtml(tk.description)+'</div>':'';
-    return '<div class="train-card" onclick="openModal('+p.pid+')">'+
-      descHtml+
-      '<div class="train-top"><span class="train-pid">PID '+p.pid+'</span><span class="train-time"><span class="dot"></span>'+p.elapsed+' &middot; '+t("cpu")+': '+p.cpu+'%</span></div>'+
-      '<div class="train-cmd">'+escHtml(p.cmd)+'</div>'+
-      '<div class="train-stats">'+
-        '<div class="ts"><span class="k">'+t("vram2")+'</span><span class="v">'+fmtBytes(p.vram)+'</span></div>'+
-        '<div class="ts"><span class="k">'+t("user")+'</span><span class="v">'+p.user+'</span></div>'+
-        stats.map(function(s){return '<div class="ts"><span class="k">'+s[0]+'</span><span class="v">'+s[1]+'</span></div>'}).join("")+
-      '</div>'+
-      (lg.last?'<div class="train-log">'+escHtml(lg.last)+'</div>':'')+
-      '<div style="text-align:right;margin-top:8px;font-size:10px;color:var(--text3)">'+t("clickDetail")+'</div>'+
-    '</div>'}).join("");
-}
-
-/* ===== Syntax Highlighting for Logs ===== */
-function highlightLog(text){
-  if(!text)return '';
-  var lines=text.split('\n');
-  return lines.map(function(line){
-    var esc=escHtml(line);
-    if(/(\berror\b|exception|traceback|fatal|failed|critical|segfault)/i.test(line)){
-      return '<span class="hl-error">'+esc+'</span>';
-    }
-    if(/(\bwarn(ing)?\b|deprecated|futurewarning|userwarning)/i.test(line)){
-      return '<span class="hl-warn">'+esc+'</span>';
-    }
-    if(/(\bepoch\b|\bloss\b|\bacc\b|\baccu|\bstep\b|\blr\b|\beta\b|\bit[\/]?s\b|\btrain\b.*\bloss\b|\bval\b.*\bloss\b)/i.test(line)){
-      return '<span class="hl-metric">'+esc+'</span>';
-    }
-    return esc;
-  }).join('\n');
-}
-
-/* ===== Detail Tab Rendering ===== */
-function renderDetailTab(detail,pid){
-  if(!detail){return '<div class="log-empty">'+t("logEmpty")+'</div>'}
-  var html='<div class="detail-grid">';
-  if(detail.cmdline!==undefined) html+='<div class="dk">'+t("cmdline")+'</div><div class="dv">'+escHtml(typeof detail.cmdline==='object'?JSON.stringify(detail.cmdline):String(detail.cmdline))+'</div>';
-  if(detail.status!==undefined) html+='<div class="dk">'+t("status")+'</div><div class="dv">'+escHtml(String(detail.status))+'</div>';
-  if(detail.cwd!==undefined) html+='<div class="dk">CWD</div><div class="dv">'+escHtml(detail.cwd)+'</div>';
-  if(detail.open_files!==undefined){
-    var ofStr=Array.isArray(detail.open_files)?detail.open_files.join('\n'):String(detail.open_files);
-    html+='<div class="dk">'+t("openFiles")+'</div><div class="dv" style="white-space:pre-wrap;max-height:200px;overflow-y:auto">'+escHtml(ofStr)+'</div>';
-  }
-  if(detail.env!==undefined){
-    var envStr=typeof detail.env==='object'?Object.entries(detail.env).map(function(e){return e[0]+'='+e[1]}).join('\n'):String(detail.env);
-    html+='<div class="dk">'+t("envVars")+'</div><div class="dv" style="white-space:pre-wrap;max-height:200px;overflow-y:auto">'+escHtml(envStr)+'</div>';
-  }
-  if(detail.io!==undefined){
-    var ioStr=typeof detail.io==='object'?JSON.stringify(detail.io,null,2):String(detail.io);
-    html+='<div class="dk">'+t("ioStats")+'</div><div class="dv" style="white-space:pre-wrap">'+escHtml(ioStr)+'</div>';
-  }
-  var known={cmdline:1,status:1,cwd:1,open_files:1,env:1,io:1};
-  if(typeof detail==='object'&&!Array.isArray(detail)){
-    Object.keys(detail).forEach(function(k){
-      if(!known[k]){
-        var val=typeof detail[k]==='object'?JSON.stringify(detail[k],null,2):String(detail[k]);
-        html+='<div class="dk">'+escHtml(k)+'</div><div class="dv" style="white-space:pre-wrap">'+escHtml(val)+'</div>';
-      }
-    });
-  }
-  html+='</div>';
-  return html;
-}
-
-/* ===== Modal Logic ===== */
-var currentModalPid=null;
-function openModal(pid){
-  currentModalPid=pid;
-  document.getElementById("modalPid").textContent="PID "+pid;
-  switchTab('stdout');
-  ['stdout','stderr','detail'].forEach(function(tab){
-    document.getElementById('pane-'+tab).innerHTML='<div class="modal-loading">'+t("loading")+'</div>';
-  });
-  document.getElementById("modalOverlay").classList.add("active");
-  document.body.style.overflow="hidden";
-  fetchLogData(pid);
-}
-function closeModal(){
-  document.getElementById("modalOverlay").classList.remove("active");
-  document.body.style.overflow="";
-  currentModalPid=null;
-}
-function switchTab(tabName){
-  document.querySelectorAll('.modal-tab').forEach(function(b){b.classList.toggle('active',b.getAttribute('data-tab')===tabName)});
-  document.querySelectorAll('.tab-pane').forEach(function(p){p.classList.toggle('active',p.id==='pane-'+tabName)});
-}
-document.getElementById("modalOverlay").addEventListener("click",function(e){
-  if(e.target===this)closeModal();
-});
-document.addEventListener("keydown",function(e){
-  if(e.key==="Escape")closeModal();
-});
-
-async function fetchLogData(pid){
-  try{
-    var r=await fetch('/api/log?pid='+pid+'&lines=300');
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    var d=await r.json();
-    if(currentModalPid!==pid)return;
-    var stdoutPane=document.getElementById('pane-stdout');
-    if(d.stdout&&d.stdout.trim()){
-      stdoutPane.innerHTML='<div class="log-area">'+highlightLog(d.stdout)+'</div>';
-    }else{
-      stdoutPane.innerHTML='<div class="log-empty">'+t("logEmpty")+'</div>';
-    }
-    var stderrPane=document.getElementById('pane-stderr');
-    if(d.stderr&&d.stderr.trim()){
-      stderrPane.innerHTML='<div class="log-area">'+highlightLog(d.stderr)+'</div>';
-    }else{
-      stderrPane.innerHTML='<div class="log-empty">'+t("logEmpty")+'</div>';
-    }
-    var detailPane=document.getElementById('pane-detail');
-    detailPane.innerHTML=renderDetailTab(d.detail,pid);
-  }catch(e){
-    if(currentModalPid!==pid)return;
-    ['stdout','stderr','detail'].forEach(function(tab){
-      document.getElementById('pane-'+tab).innerHTML='<div class="log-empty" style="color:var(--red2)">Failed to load: '+escHtml(e.message)+'</div>';
-    });
-  }
+    return `<div class="train-card">
+      <div class="train-top"><span class="train-pid">PID ${p.pid}</span><span class="train-time"><span class="dot"></span>${p.elapsed} &middot; ${t("cpu")}: ${p.cpu}%</span></div>
+      <div class="train-cmd">${p.cmd}</div>
+      <div class="train-stats">
+        <div class="ts"><span class="k">${t("vram2")}</span><span class="v">${fmtBytes(p.vram)}</span></div>
+        <div class="ts"><span class="k">${t("user")}</span><span class="v">${p.user}</span></div>
+        ${stats.map(([k,v])=>`<div class="ts"><span class="k">${k}</span><span class="v">${v}</span></div>`).join("")}
+      </div>
+      ${lg.last?`<div class="train-log">${lg.last}</div>`:""}
+    </div>`}).join("");
 }
 
 function renderSystem(d){
   const s=d.system||{};
+  // Memory
   const memEl=document.getElementById("sysMem");
   if(s.mem){
     const lines=s.mem.split("\n").filter(l=>l.trim());
     let memHtml='<div style="font-weight:600;margin-bottom:12px">'+t("memory")+'</div>';
     lines.forEach(l=>{
       const p=l.split(/\s+/);
-      if(p.length>=4){memHtml+='<div class="sys-row"><span class="k">'+p[0]+'</span><span class="v">'+p[2]+' / '+p[1]+'</span></div>'}
+      if(p.length>=4){
+        const used=p[2];const total=p[1];
+        memHtml+=`<div class="sys-row"><span class="k">${p[0]}</span><span class="v">${used} / ${total}</span></div>`;
+      }
     });
     memEl.innerHTML=memHtml;
   }
+  // Disk
   const diskEl=document.getElementById("sysDisk");
   if(s.disk){
     const diskLines=s.disk.split("\n").filter(l=>l.trim()&&!l.startsWith("Filesystem"));
     let diskHtml='<div style="font-weight:600;margin-bottom:12px">'+t("disk")+'</div>';
     diskLines.forEach(l=>{
       const p=l.split(/\s+/);
-      if(p.length>=6){diskHtml+='<div class="sys-row"><span class="k">'+p[5]+'</span><span class="v">'+p[2]+' / '+p[1]+' ('+p[4]+')</span></div>'}
+      if(p.length>=6){
+        const pct=parseInt(p[4])||0;
+        diskHtml+=`<div class="sys-row"><span class="k">${p[5]}</span><span class="v">${p[2]} / ${p[1]} (${p[4]})</span></div>`;
+      }
     });
     diskEl.innerHTML=diskHtml;
   }
+  // Network
   const netEl=document.getElementById("sysNet");
   const nets=d.network||[];
   let netHtml='<div style="font-weight:600;margin-bottom:12px">'+t("network")+'</div>';
   if(nets.length){
-    nets.forEach(n=>{netHtml+='<div class="net-row"><span class="net-iface">'+n.iface+'</span><div class="net-stats"><span class="net-stat"><span class="arrow down">&darr;</span> '+fmtBytes(Math.round(n.rx/1024))+'</span><span class="net-stat"><span class="arrow up">&uarr;</span> '+fmtBytes(Math.round(n.tx/1024))+'</span></div></div>'});
+    nets.forEach(n=>{
+      netHtml+=`<div class="net-row"><span class="net-iface">${n.iface}</span><div class="net-stats"><span class="net-stat"><span class="arrow down">&darr;</span> ${fmtBytes(Math.round(n.rx/1024))}</span><span class="net-stat"><span class="arrow up">&uarr;</span> ${fmtBytes(Math.round(n.tx/1024))}</span></div></div>`;
+    });
   } else {netHtml+='<div class="empty">--</div>'}
   netEl.innerHTML=netHtml;
+  // Processes
   const procs=d.processes||[];
   const tbody=document.querySelector("#procTable tbody");
   if(procs.length){
-    tbody.innerHTML=procs.slice(0,10).map(p=>'<tr><td>'+p.pid+'</td><td>'+p.user+'</td><td>'+p.cpu+'</td><td>'+p.mem+'</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(p.cmd)+'</td></tr>').join("");
+    tbody.innerHTML=procs.slice(0,10).map(p=>`<tr><td>${p.pid}</td><td>${p.user}</td><td>${p.cpu}</td><td>${p.mem}</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.cmd}</td></tr>`).join("");
   }
 }
 
@@ -513,7 +349,7 @@ async function fetchData(){
     document.getElementById("serverTag").textContent=d.server_name||"--";
     if(d.error){document.getElementById("errorBanner").style.display="flex";document.getElementById("errorText").textContent=d.error}
     else{document.getElementById("errorBanner").style.display="none"}
-    renderStats(d);renderGPU(d.gpus);renderTraining(d.training,d.logs,d.tasks);renderSystem(d);
+    renderStats(d);renderGPU(d.gpus);renderTraining(d.training,d.logs);renderSystem(d);
   }catch(e){
     document.getElementById("statusDot").className="status-dot err";
     document.getElementById("statusText").textContent="Error";
