@@ -1,6 +1,6 @@
 ---
 name: server-pilot
-description: "Remote server management for Codex: SSH commands, GPU monitoring, training progress tracking with epoch/loss/accuracy parsing, and file transfer. Supports multi-server configs, SSH key auth, and continuous monitoring. Use when the user asks to check server status, GPU usage, training progress, run remote commands, upload/download files, or mentions server/SSH/GPU/training/监控/服务器/训练."
+description: "Remote server management for Codex: SSH commands, GPU monitoring, training progress tracking with epoch/loss/accuracy parsing, and file transfer. Supports multi-server configs, SSH key auth, and continuous monitoring / watch mode. Use when the user asks to check server status, GPU usage, training progress, run remote commands, upload/download files, or mentions server/SSH/GPU/training/监控/服务器/训练."
 ---
 
 # Server Pilot
@@ -49,3 +49,4 @@ The `--logs` flag parses `/proc/PID/fd` for common training output patterns:
 ## Paths
 
 All `scripts/` paths are relative to this skill directory: `~/.codex/skills/server-pilot/scripts/`.
+
