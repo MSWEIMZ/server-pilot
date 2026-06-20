@@ -1,3 +1,3 @@
-display_name: "My Server SSH"
-short_description: "通过 SSH 连接并管理你的远程服务器"
-default_prompt: "帮我检查服务器状态"
+display_name: "Server Pilot"
+short_description: "🚀 One-command server control: SSH, GPU monitoring & training tracker"
+default_prompt: "Check my server status"
