@@ -1,0 +1,3 @@
+display_name: "My Server SSH"
+short_description: "通过 SSH 连接并管理你的远程服务器"
+default_prompt: "帮我检查服务器状态"

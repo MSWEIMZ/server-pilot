@@ -1,0 +1,7 @@
+# Sensitive config (contains your server password)
+scripts/server_config.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
