@@ -1,6 +1,6 @@
-# My Server SSH - Codex Skill
+# Server Pilot
 
-通过 SSH 连接远程服务器的 Codex Skill，支持命令执行、GPU 监控和训练状态追踪。
+🚀 一键掌控远程服务器的 Codex Skill，支持命令执行、GPU 监控和训练状态追踪。
 
 ## 功能
 
@@ -14,10 +14,10 @@
 
 ## 安装
 
-将 my-server-ssh 文件夹复制到 Codex skills 目录：
+将 server-pilot 文件夹复制到 Codex skills 目录：
 
 `
-~/.codex/skills/my-server-ssh/
+~/.codex/skills/server-pilot/
 `
 
 ## 配置
@@ -99,7 +99,7 @@ python scripts/ssh_exec.py --download /remote/path/file.txt ./local_file.txt
 ## 目录结构
 
 `
-my-server-ssh/
+server-pilot/
 ├── SKILL.md                        # Codex 技能描述
 ├── README.md                       # 本文件
 ├── .gitignore                      # Git 忽略规则
@@ -115,3 +115,4 @@ my-server-ssh/
 ## License
 
 MIT
+
