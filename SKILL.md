@@ -46,7 +46,27 @@ The `--logs` flag parses `/proc/PID/fd` for common training output patterns:
 - Step/iteration: `Step 100/5000`
 - ETA: `ETA: 2h30m`
 
+
+## Web Dashboard
+
+Launch a real-time web dashboard to monitor your server in the browser:
+
+`ash
+python scripts/web/dashboard.py              # Start on port 8765
+python scripts/web/dashboard.py --port 9000  # Custom port
+python scripts/web/dashboard.py --server gpu-box  # Multi-server
+python scripts/web/dashboard.py --no-browser  # Don't auto-open
+`
+
+Features:
+- Real-time GPU status (temp, power, VRAM, utilization)
+- Training process list with epoch/loss/accuracy parsing
+- System resources (CPU, memory, disk, load)
+- Auto-refreshes every 10 seconds
+- Dark theme, responsive design
+
 ## Paths
 
 All `scripts/` paths are relative to this skill directory: `~/.codex/skills/server-pilot/scripts/`.
+
 

@@ -13,8 +13,6 @@ Usage:
 """
 
 import argparse, json, os, re, subprocess, sys, io, time
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 def ensure_paramiko():
     try:
@@ -229,3 +227,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

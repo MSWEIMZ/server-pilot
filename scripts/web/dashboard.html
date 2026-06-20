@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Server Pilot Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+  .header { background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border-bottom: 1px solid #334155; padding: 20px 30px; display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 24px; font-weight: 600; }
+  .header h1 span { color: #38bdf8; }
+  .header .status { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #94a3b8; }
+  .header .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 20px; margin-bottom: 20px; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; }
+  .card-title { font-size: 14px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+  .gpu-card { border-left: 3px solid #38bdf8; }
+  .train-card { border-left: 3px solid #a78bfa; }
+  .sys-card { border-left: 3px solid #22c55e; }
+  .gpu-info { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .gpu-stat { background: #0f172a; border-radius: 8px; padding: 12px; }
+  .gpu-stat .label { font-size: 12px; color: #64748b; margin-bottom: 4px; }
+  .gpu-stat .value { font-size: 24px; font-weight: 700; }
+  .gpu-stat .value.hot { color: #ef4444; }
+  .gpu-stat .value.warm { color: #f59e0b; }
+  .gpu-stat .value.cool { color: #22c55e; }
+  .gpu-bar { margin-top: 16px; }
+  .bar-label { display: flex; justify-content: space-between; font-size: 12px; color: #64748b; margin-bottom: 6px; }
+  .bar-track { height: 24px; background: #0f172a; border-radius: 12px; overflow: hidden; position: relative; }
+  .bar-fill { height: 100%; border-radius: 12px; transition: width 0.8s ease; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; font-size: 12px; font-weight: 600; }
+  .bar-fill.mem { background: linear-gradient(90deg, #38bdf8, #818cf8); }
+  .bar-fill.util { background: linear-gradient(90deg, #22c55e, #f59e0b); }
+  .bar-fill.disk { background: linear-gradient(90deg, #a78bfa, #ec4899); }
+  .train-item { background: #0f172a; border-radius: 8px; padding: 14px; margin-bottom: 10px; }
+  .train-item:last-child { margin-bottom: 0; }
+  .train-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .train-pid { font-weight: 700; color: #a78bfa; }
+  .train-time { font-size: 13px; color: #64748b; }
+  .train-cmd { font-size: 12px; color: #64748b; word-break: break-all; margin-bottom: 8px; font-family: 'JetBrains Mono', monospace; }
+  .train-metrics { display: flex; gap: 12px; flex-wrap: wrap; }
+  .metric { background: #1e293b; border-radius: 6px; padding: 6px 10px; font-size: 12px; }
+  .metric .k { color: #64748b; }
+  .metric .v { color: #e2e8f0; font-weight: 600; }
+  .sys-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #334155; font-size: 14px; }
+  .sys-row:last-child { border-bottom: none; }
+  .sys-row .k { color: #64748b; }
+  .sys-row .v { font-weight: 500; }
+  .no-data { text-align: center; padding: 40px; color: #475569; font-size: 14px; }
+  .error { background: #7f1d1d; border: 1px solid #dc2626; border-radius: 8px; padding: 14px; margin-bottom: 10px; color: #fca5a5; font-size: 13px; }
+  .refresh-btn { background: #334155; border: 1px solid #475569; color: #e2e8f0; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 0.2s; }
+  .refresh-btn:hover { background: #475569; }
+  .footer { text-align: center; padding: 20px; color: #475569; font-size: 12px; }
+  .footer a { color: #38bdf8; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Server <span>Pilot</span></h1>
+  <div class="status">
+    <div class="dot" id="statusDot"></div>
+    <span id="statusText">Connecting...</span>
+    <button class="refresh-btn" onclick="fetchData()">Refresh</button>
+  </div>
+</div>
+
+<div class="container">
+  <!-- GPU Section -->
+  <div class="grid" id="gpuGrid"></div>
+
+  <!-- Training Section -->
+  <div class="card train-card" id="trainCard">
+    <div class="card-title">Training Processes</div>
+    <div id="trainContent"><div class="no-data">Loading...</div></div>
+  </div>
+
+  <!-- System Section -->
+  <div class="grid" style="margin-top: 20px;">
+    <div class="card sys-card" id="sysCard">
+      <div class="card-title">System Resources</div>
+      <div id="sysContent"><div class="no-data">Loading...</div></div>
+    </div>
+    <div class="card sys-card" id="diskCard">
+      <div class="card-title">Disk Usage</div>
+      <div id="diskContent"><div class="no-data">Loading...</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <a href="https://github.com/MSWEIMZ/server-pilot">Server Pilot</a> &mdash; Auto-refreshes every 10 seconds
+</div>
+
+<script>
+let refreshTimer = null;
+
+function formatBytes(mb) {
+  if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+  return mb + ' MB';
+}
+
+function tempClass(t) {
+  if (t >= 80) return 'hot';
+  if (t >= 60) return 'warm';
+  return 'cool';
+}
+
+function renderGPU(gpus) {
+  const grid = document.getElementById('gpuGrid');
+  if (!gpus || gpus.length === 0) {
+    grid.innerHTML = '<div class="card gpu-card"><div class="card-title">GPU Status</div><div class="no-data">No GPU detected</div></div>';
+    return;
+  }
+  grid.innerHTML = gpus.map(g => `
+    <div class="card gpu-card">
+      <div class="card-title">GPU ${g.idx}: ${g.name}</div>
+      <div class="gpu-info">
+        <div class="gpu-stat">
+          <div class="label">Temperature</div>
+          <div class="value ${tempClass(g.temp)}">${g.temp}°C</div>
+        </div>
+        <div class="gpu-stat">
+          <div class="label">Power</div>
+          <div class="value">${g.pwr}W</div>
+        </div>
+        <div class="gpu-stat">
+          <div class="label">Utilization</div>
+          <div class="value">${g.util}%</div>
+        </div>
+        <div class="gpu-stat">
+          <div class="label">Fan Speed</div>
+          <div class="value">${g.fan || '-'}%</div>
+        </div>
+      </div>
+      <div class="gpu-bar">
+        <div class="bar-label"><span>VRAM</span><span>${formatBytes(g.mem_u)} / ${formatBytes(g.mem_t)}</span></div>
+        <div class="bar-track"><div class="bar-fill mem" style="width:${g.mem_pct}%">${g.mem_pct}%</div></div>
+      </div>
+      <div class="gpu-bar">
+        <div class="bar-label"><span>GPU Utilization</span><span>${g.util}%</span></div>
+        <div class="bar-track"><div class="bar-fill util" style="width:${g.util}%">${g.util}%</div></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderTraining(procs, logs) {
+  const el = document.getElementById('trainContent');
+  if (!procs || procs.length === 0) {
+    el.innerHTML = '<div class="no-data">No training processes running</div>';
+    return;
+  }
+  el.innerHTML = procs.map(p => {
+    const log = (logs && logs[p.pid]) || {};
+    const metrics = [];
+    if (log.epoch) metrics.push(['Epoch', log.epoch]);
+    if (log.loss !== undefined) metrics.push(['Loss', typeof log.loss === 'number' ? log.loss.toFixed(4) : log.loss]);
+    if (log.acc) metrics.push(['Accuracy', log.acc]);
+    if (log.lr) metrics.push(['LR', log.lr]);
+    if (log.step) metrics.push(['Step', log.step]);
+    if (log.eta) metrics.push(['ETA', log.eta]);
+    return `
+      <div class="train-item">
+        <div class="train-header">
+          <span class="train-pid">PID ${p.pid}</span>
+          <span class="train-time">${p.elapsed} | CPU: ${p.cpu}%</span>
+        </div>
+        <div class="train-cmd">${p.cmd}</div>
+        <div class="train-metrics">
+          <div class="metric"><span class="k">VRAM </span><span class="v">${formatBytes(p.vram)}</span></div>
+          <div class="metric"><span class="k">User </span><span class="v">${p.user}</span></div>
+          ${metrics.map(([k,v]) => `<div class="metric"><span class="k">${k} </span><span class="v">${v}</span></div>`).join('')}
+        </div>
+        ${log.last ? `<div style="margin-top:8px;font-size:11px;color:#475569;font-family:monospace;">${log.last}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function renderSystem(sys) {
+  const el = document.getElementById('sysContent');
+  if (!sys) { el.innerHTML = '<div class="no-data">No data</div>'; return; }
+  const rows = [];
+  if (sys.uptime) rows.push(['Uptime', sys.uptime]);
+  if (sys.load) rows.push(['Load Avg', sys.load]);
+  if (sys.mem) {
+    const lines = sys.mem.split('\n').filter(l => l.trim());
+    lines.forEach(l => {
+      const parts = l.split(/\s+/);
+      if (parts.length >= 4) rows.push([parts[0], `${parts[2]} used / ${parts[1]} total`]);
+    });
+  }
+  el.innerHTML = rows.map(([k,v]) => `<div class="sys-row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+
+  const diskEl = document.getElementById('diskContent');
+  if (sys.disk) {
+    const diskRows = sys.disk.split('\n').filter(l => l.trim() && !l.startsWith('Filesystem'));
+    diskEl.innerHTML = diskRows.map(l => {
+      const p = l.split(/\s+/);
+      if (p.length >= 6) return `<div class="sys-row"><span class="k">${p[5]}</span><span class="v">${p[2]} used / ${p[1]} (${p[4]})</span></div>`;
+      return '';
+    }).join('');
+  }
+}
+
+async function fetchData() {
+  try {
+    const resp = await fetch('/api/status');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    document.getElementById('statusDot').style.background = '#22c55e';
+    document.getElementById('statusText').textContent = 'Connected | ' + new Date().toLocaleTimeString();
+    renderGPU(data.gpus);
+    renderTraining(data.training, data.logs);
+    renderSystem(data.system);
+  } catch (e) {
+    document.getElementById('statusDot').style.background = '#ef4444';
+    document.getElementById('statusText').textContent = 'Error: ' + e.message;
+  }
+}
+
+// Auto-refresh every 10 seconds
+fetchData();
+refreshTimer = setInterval(fetchData, 10000);
+</script>
+</body>
+</html>
