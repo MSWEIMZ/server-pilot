@@ -1,83 +1,51 @@
 ---
-name: my-server-ssh
-description: Connect to the user's personal remote server via SSH and monitor GPU/training status. Use when the user asks to run commands on the server, check server status, check GPU usage, monitor training progress, upload/download files, manage the server, or mentions "服务器", "server", "SSH", "GPU", "训练", "监控". Uses Python paramiko to bypass shell environment issues.
+name: server-pilot
+description: "Remote server management for Codex: SSH commands, GPU monitoring, training progress tracking with epoch/loss/accuracy parsing, and file transfer. Supports multi-server configs, SSH key auth, and continuous monitoring. Use when the user asks to check server status, GPU usage, training progress, run remote commands, upload/download files, or mentions server/SSH/GPU/training/监控/服务器/训练."
 ---
 
-# My Server SSH
+# Server Pilot
 
-Execute remote commands and monitor GPU/training status on the user's personal server via SSH.
+Execute remote commands, monitor GPU, and track training progress via SSH.
 
-## Prerequisites
+## Quick Reference
 
-- Python 3.x available in PATH
-- paramiko library (auto-installed if missing)
+| Action | Command |
+|--------|---------|
+| Full status | `python scripts/server_monitor.py` |
+| GPU only | `python scripts/server_monitor.py --gpu` |
+| Training + logs | `python scripts/server_monitor.py --train --logs` |
+| JSON output | `python scripts/server_monitor.py --json` |
+| Remote command | `python scripts/ssh_exec.py "command"` |
+| Upload file | `python scripts/ssh_exec.py --upload ./local /remote/path` |
+| Download file | `python scripts/ssh_exec.py --download /remote/path ./local` |
+| List servers | `python scripts/ssh_exec.py --list-servers` |
 
-## Quick Commands
+## Windows Note
 
-### Check server status (recommended first action)
-
-```bash
+Prefix monitor commands with `chcp 65001` to avoid emoji encoding errors:
+```
 chcp 65001 & python scripts/server_monitor.py
 ```
 
-### Check GPU only
+## Multi-Server
 
-```bash
-chcp 65001 & python scripts/server_monitor.py --gpu
-```
+Configure `scripts/server_config.json` with a `servers` key. Use `--server name` to select.
+See `references/workflow.md` for examples.
 
-### Check training processes only
+## Auth
 
-```bash
-chcp 65001 & python scripts/server_monitor.py --train
-```
+SSH key auth is preferred. Falls back to password. Auto-discovers `~/.ssh/id_rsa` or `id_ed25519`.
 
-### JSON output (for programmatic use)
+## Training Log Parsing
 
-```bash
-python scripts/server_monitor.py --json
-```
+The `--logs` flag parses `/proc/PID/fd` for common training output patterns:
+- Epoch: `Epoch 5/100`, `[5/100]`
+- Loss: `loss: 0.1234`, `Loss= 0.1234`
+- Accuracy: `acc: 95.2`, `accuracy=0.952`
+- Learning rate: `lr: 1e-4`
+- Step/iteration: `Step 100/5000`
+- ETA: `ETA: 2h30m`
 
-## Run Remote Commands
+## Paths
 
-### Basic command
-
-```bash
-python scripts/ssh_exec.py "command here"
-```
-
-### With JSON output
-
-```bash
-python scripts/ssh_exec.py --json "command here"
-```
-
-### Upload a file
-
-```bash
-python scripts/ssh_exec.py --upload /local/path /remote/path
-```
-
-### Download a file
-
-```bash
-python scripts/ssh_exec.py --download /remote/path /local/path
-```
-
-### Override server config
-
-```bash
-python scripts/ssh_exec.py --host HOST --port PORT --user USER --pass PASS "command"
-```
-
-## Server Config
-
-Default connection details are stored in `scripts/server_config.json`.
-To update the server (e.g., after restart with new port), edit that JSON file.
-
-## Important Notes
-
-- Always use `chcp 65001` before running monitor scripts to avoid Windows GBK encoding errors with emoji/unicode.
-- Scripts use Python paramiko instead of system SSH, avoiding issues when PowerShell is blocked by security software.
-- paramiko is auto-installed via pip on first run.
-- The `scripts/` path is relative to this skill directory: `~/.codex/skills/my-server-ssh/scripts/`.
+All `scripts/` paths are relative to this skill directory: `~/.codex/skills/server-pilot/scripts/`.
