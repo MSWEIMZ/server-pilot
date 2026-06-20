@@ -1,118 +1,164 @@
-# Server Pilot
+<p align="center">
+  <h1 align="center">✈️ Server Pilot</h1>
+  <p align="center"><strong>One-command server control for <a href="https://github.com/openai/codex">Codex</a></strong></p>
+  <p align="center">
+    SSH execution · GPU monitoring · Training tracker · File transfer
+  </p>
+  <p align="center">
+    <img src="https://img.shields.io/badge/Python-3.8+-blue?logo=python&logoColor=white" />
+    <img src="https://img.shields.io/badge/Codex-Skill-green" />
+    <img src="https://img.shields.io/badge/License-MIT-yellow" />
+  </p>
+</p>
 
-🚀 一键掌控远程服务器的 Codex Skill，支持命令执行、GPU 监控和训练状态追踪。
+---
 
-## 功能
+## ✨ Features
 
-- 🖥️ 执行远程 SSH 命令
-- 📊 GPU 状态监控（温度/功耗/显存/利用率）
-- 🏋️ 训练进程追踪（运行时间/CPU/GPU 显存/命令行）
-- 💻 系统资源概览（CPU/内存/磁盘/负载）
-- 📁 文件上传/下载（SFTP）
-- 🔄 持续监控模式（自动刷新）
-- 📋 JSON 输出（方便程序化处理）
+| Feature | Description |
+|---------|-------------|
+| 🖥️ **SSH Commands** | Execute any command on your remote server |
+| 📊 **GPU Monitor** | Real-time temperature, power, memory & utilization |
+| 🏋️ **Training Tracker** | Auto-detect training processes with elapsed time & GPU memory |
+| 💻 **System Overview** | CPU, memory, disk, load at a glance |
+| 📁 **File Transfer** | Upload & download files via SFTP |
+| 🔄 **Watch Mode** | Continuous monitoring with auto-refresh |
+| 📋 **JSON Output** | Machine-readable output for scripts & automation |
 
-## 安装
+## 📸 Demo
 
-将 server-pilot 文件夹复制到 Codex skills 目录：
+```
+============================================================
+  Server Status Report
+============================================================
 
-`
-~/.codex/skills/server-pilot/
-`
+📊 GPU:
+  🔥 GPU 0: NVIDIA vGPU-32GB
+     Temp: 56°C  |  Power: 258W / 320W
+     Util: 100%  |  VRAM: [███████████████████░] 95% 31180/32760 MB
 
-## 配置
+🏋️ Training:
+  PID 177850  |  Elapsed: 05:14:49  |  CPU: 108%  |  VRAM: 3976 MB
+     python train_efficientnet_m.py --mode full_voting
+  PID 189739  |  Elapsed: 04:04     |  CPU: 90%   |  VRAM: 27188 MB
+     python train_r2plus1d_l4_3d_improved.py --num_classes 16 ...
 
-复制示例配置并填入你的服务器信息：
+💻 System:
+  23:56:53 up 210 days, 10:58, load average: 5.77, 6.10, 5.31
+  Mem: 755Gi total, 41Gi used, 53Gi free
 
-`ash
-cp scripts/server_config.example.json scripts/server_config.json
-`
+============================================================
+```
 
-编辑 scripts/server_config.json：
+## 🚀 Quick Start
 
-`json
+### 1. Install
+
+Copy the `server-pilot` folder to your Codex skills directory:
+
+```bash
+# Clone the repo
+git clone https://github.com/MSWEIMZ/server-pilot.git ~/.codex/skills/server-pilot
+```
+
+### 2. Configure
+
+```bash
+# Copy the example config
+cp ~/.codex/skills/server-pilot/scripts/server_config.example.json    ~/.codex/skills/server-pilot/scripts/server_config.json
+```
+
+Edit `server_config.json` with your server info:
+
+```json
 {
-  "host": "your-server-host.com",
+  "host": "your-server.com",
   "port": 22,
   "username": "root",
-  "password": "your-password-here"
+  "password": "your-password"
 }
-`
+```
 
-## 使用
+### 3. Use
 
-### 在 Codex 中自动触发
+Just talk to Codex naturally:
 
-直接在对话中说：
-- "检查服务器状态"
-- "GPU 状态怎样"
-- "训练进度怎么样"
-- "在服务器上运行 nvidia-smi"
+> 🗣️ "Check my server status"
+>
+> 🗣️ "How's the GPU doing?"
+>
+> 🗣️ "Is my training still running?"
 
-### 手动命令行使用
+Or run directly from terminal:
 
-#### 监控（推荐）
-
-`ash
-# 完整报告（GPU + 训练 + 系统）
+```bash
+# Full status report
 python scripts/server_monitor.py
 
-# 只看 GPU
+# GPU only
 python scripts/server_monitor.py --gpu
 
-# 只看训练进程
+# Training processes only
 python scripts/server_monitor.py --train
 
-# JSON 格式输出
+# JSON output
 python scripts/server_monitor.py --json
 
-# 持续监控（每 30 秒刷新）
+# Continuous monitoring (refresh every 30s)
 python scripts/server_monitor.py --watch
 
-# 自定义刷新间隔
+# Custom interval
 python scripts/server_monitor.py --watch --interval 60
-`
+```
 
-> **Windows 用户注意：** 运行监控脚本前先执行 chcp 65001 避免 emoji 编码错误。
+## 🛠️ Remote Commands
 
-#### 远程命令
-
-`ash
-# 执行命令
+```bash
+# Run any command
 python scripts/ssh_exec.py "nvidia-smi"
+python scripts/ssh_exec.py "df -h && free -m"
 
-# JSON 输出
-python scripts/ssh_exec.py --json "df -h"
+# JSON output
+python scripts/ssh_exec.py --json "uptime"
 
-# 上传文件
-python scripts/ssh_exec.py --upload ./local_file.txt /remote/path/
+# Upload file
+python scripts/ssh_exec.py --upload ./model.pt /root/autodl-tmp/
 
-# 下载文件
-python scripts/ssh_exec.py --download /remote/path/file.txt ./local_file.txt
-`
+# Download file
+python scripts/ssh_exec.py --download /root/logs/train.log ./train.log
+```
 
-## 依赖
+## 📦 Requirements
 
-- Python 3.x
-- paramiko（首次运行自动安装）
+- **Python** 3.8+
+- **paramiko** — auto-installed on first run
+- **Codex** (optional) — works standalone too
 
-## 目录结构
+## 📁 Structure
 
-`
+```
 server-pilot/
-├── SKILL.md                        # Codex 技能描述
-├── README.md                       # 本文件
-├── .gitignore                      # Git 忽略规则
+├── SKILL.md                          # Codex skill descriptor
+├── README.md                         # This file
+├── .gitignore
 ├── agents/
-│   └── openai.yaml                 # Codex UI 元数据
+│   └── openai.yaml                   # Codex UI metadata
 └── scripts/
-    ├── ssh_exec.py                 # SSH 命令执行工具
-    ├── server_monitor.py           # GPU/训练状态监控
-    ├── server_config.json          # 你的服务器配置（不会上传）
-    └── server_config.example.json  # 配置示例
-`
+    ├── ssh_exec.py                   # SSH command executor
+    ├── server_monitor.py             # GPU & training monitor
+    ├── server_config.json            # Your config (git-ignored)
+    └── server_config.example.json    # Example config
+```
 
-## License
+## 🤝 Contributing
+
+Issues and PRs welcome! Some ideas:
+
+- [ ] Multi-server support
+- [ ] Training loss/accuracy log parsing
+- [ ] Slack / DingTalk alert on GPU overheat
+- [ ] Web dashboard
+
+## 📄 License
 
 MIT
-
