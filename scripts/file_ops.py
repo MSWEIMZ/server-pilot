@@ -363,6 +363,100 @@ def diff_file(ssh, sftp, remote_path, local_path):
 
     os.unlink(tmp.name)
 
+
+# ===== PROGRESS BAR =====
+class ProgressBar:
+    def __init__(self, total, label=""):
+        self.total = total
+        self.current = 0
+        self.label = label
+        self.start_time = time.time()
+    def update(self, bytes_t):
+        self.current = bytes_t
+        elapsed = time.time() - self.start_time
+        pct = (self.current / self.total * 100) if self.total > 0 else 0
+        bar_len = 30
+        filled = int(bar_len * pct / 100)
+        bar = "=" * filled + " " * (bar_len - filled)
+        speed = self.current / elapsed / 1048576 if elapsed > 0 else 0
+        remaining = (self.total - self.current) / (speed * 1048576) if speed > 0 else 0
+        eta = f"{int(remaining//60)}:{int(remaining%60):02d}" if speed > 0 else "--:--"
+        cur_mb = self.current / 1048576
+        tot_mb = self.total / 1048576
+        sys.stdout.write(f"\r  [{bar}] {pct:5.1f}%  {cur_mb:.1f}/{tot_mb:.1f} MB  {speed:.1f} MB/s  ETA {eta}  ")
+        sys.stdout.flush()
+    def finish(self):
+        elapsed = time.time() - self.start_time
+        avg = (self.total / elapsed / 1048576) if elapsed > 0 else 0
+        print(f"\r  [{'='*30}] 100.0%  Done! ({avg:.1f} MB/s, {elapsed:.1f}s)")
+
+# ===== BIG UPLOAD =====
+def big_upload(ssh, local_path, remote_path):
+    if not os.path.exists(local_path):
+        print(f"Error: Not found: {local_path}", file=sys.stderr); return 1
+    total = os.path.getsize(local_path)
+    print(f"Uploading: {local_path} ({total/1048576:.1f} MB)")
+    sftp = ssh.open_sftp()
+    rsize = 0
+    try: rsize = sftp.stat(remote_path).st_size
+    except: pass
+    if rsize >= total:
+        print("  Remote file exists, same size. Skipped."); sftp.close(); return 0
+    if rsize > 0:
+        print(f"  Resuming from {rsize/1048576:.1f} MB...")
+    prog = ProgressBar(total)
+    prog.update(rsize)
+    with open(local_path, "rb") as f:
+        f.seek(rsize)
+        with sftp.open(remote_path, "a" if rsize > 0 else "w") as rf:
+            if rsize > 0: rf.seek(rsize)
+            transferred = rsize
+            while transferred < total:
+                chunk = f.read(65536)
+                if not chunk: break
+                rf.write(chunk)
+                transferred += len(chunk)
+                prog.update(transferred)
+    prog.finish()
+    # Verify
+    try:
+        fsize = sftp.stat(remote_path).st_size
+        if fsize == total: print(f"  Verified: {fsize} bytes")
+        else: print(f"  Warning: size mismatch local={total} remote={fsize}")
+    except: pass
+    sftp.close(); return 0
+
+# ===== BIG DOWNLOAD =====
+def big_download(ssh, remote_path, local_path):
+    sftp = ssh.open_sftp()
+    try: total = sftp.stat(remote_path).st_size
+    except FileNotFoundError:
+        print(f"Error: Not found: {remote_path}", file=sys.stderr); sftp.close(); return 1
+    print(f"Downloading: {remote_path} ({total/1048576:.1f} MB)")
+    lsize = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+    if lsize >= total:
+        print("  Local file exists, same size. Skipped."); sftp.close(); return 0
+    if lsize > 0:
+        print(f"  Resuming from {lsize/1048576:.1f} MB...")
+    prog = ProgressBar(total)
+    prog.update(lsize)
+    with open(local_path, "ab" if lsize > 0 else "wb") as f:
+        with sftp.open(remote_path, "r") as rf:
+            if lsize > 0: rf.seek(lsize)
+            f.seek(lsize)
+            transferred = lsize
+            while transferred < total:
+                chunk = rf.read(65536)
+                if not chunk: break
+                f.write(chunk)
+                transferred += len(chunk)
+                prog.update(transferred)
+    prog.finish()
+    fsize = os.path.getsize(local_path)
+    if fsize == total: print(f"  Verified: {fsize} bytes")
+    else: print(f"  Warning: size mismatch remote={total} local={fsize}")
+    sftp.close(); return 0
+
 def main():
     pa = argparse.ArgumentParser(description="Remote file operations")
     sub = pa.add_subparsers(dest="command")
@@ -403,6 +497,12 @@ def main():
     p_down.add_argument("local", help="Local directory")
 
     # diff
+    p_bup = sub.add_parser("big-upload", help="Upload large file with progress/resume")
+    p_bup.add_argument("local", help="Local file path")
+    p_bup.add_argument("remote", help="Remote file path")
+    p_bdown = sub.add_parser("big-download", help="Download large file with progress/resume")
+    p_bdown.add_argument("remote", help="Remote file path")
+    p_bdown.add_argument("local", help="Local file path")
     p_diff = sub.add_parser("diff", help="Compare remote vs local file")
     p_diff.add_argument("remote", help="Remote file path")
     p_diff.add_argument("local", help="Local file path")
@@ -443,6 +543,12 @@ def main():
             return sync_down(ssh, sftp, args.remote, args.local)
         elif args.command == "diff":
             return diff_file(ssh, sftp, args.remote, args.local)
+        elif args.command == "big-upload":
+            sftp.close()
+            return big_upload(ssh, args.local, args.remote)
+        elif args.command == "big-download":
+            sftp.close()
+            return big_download(ssh, args.remote, args.local)
 
         sftp.close()
     except Exception as e:

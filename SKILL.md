@@ -1,4 +1,4 @@
----
+﻿---
 name: server-pilot
 description: "Remote server management for Codex: SSH commands, GPU monitoring, training progress tracking with epoch/loss/accuracy parsing, and file transfer. Supports multi-server configs, SSH key auth, and continuous monitoring / watch mode. Use when the user asks to check server status, GPU usage, training progress, run remote commands, upload/download files, or mentions server/SSH/GPU/training/监控/服务器/训练."
 ---
@@ -92,6 +92,23 @@ python scripts/file_ops.py sync-down /remote/dir ./local/dir
 
 # Compare files
 python scripts/file_ops.py diff /remote/file ./local/file
+```
+
+## Background Tasks
+
+Run commands that survive SSH disconnect, list/status, view logs, and stop.
+
+```bash
+python scripts/task_mgr.py run "python train.py --epochs 100"
+python scripts/task_mgr.py run "python train.py" --name my-training --tool screen --workdir /root/project
+python scripts/task_mgr.py list
+python scripts/task_mgr.py status
+python scripts/task_mgr.py logs my-training
+python scripts/task_mgr.py logs my-training -f
+python scripts/task_mgr.py logs my-training -n 200
+python scripts/task_mgr.py stop my-training
+python scripts/task_mgr.py stop --all
+python scripts/task_mgr.py --server gpu-box run "python train.py"
 ```
 ## Paths
 
