@@ -382,30 +382,16 @@ function highlightLog(text){
 function renderDetailTab(detail,pid){
   if(!detail){return '<div class="log-empty">'+t("logEmpty")+'</div>'}
   var html='<div class="detail-grid">';
-  if(detail.cmdline!==undefined) html+='<div class="dk">'+t("cmdline")+'</div><div class="dv">'+escHtml(typeof detail.cmdline==='object'?JSON.stringify(detail.cmdline):String(detail.cmdline))+'</div>';
-  if(detail.status!==undefined) html+='<div class="dk">'+t("status")+'</div><div class="dv">'+escHtml(String(detail.status))+'</div>';
-  if(detail.cwd!==undefined) html+='<div class="dk">CWD</div><div class="dv">'+escHtml(detail.cwd)+'</div>';
-  if(detail.open_files!==undefined){
-    var ofStr=Array.isArray(detail.open_files)?detail.open_files.join('\n'):String(detail.open_files);
-    html+='<div class="dk">'+t("openFiles")+'</div><div class="dv" style="white-space:pre-wrap;max-height:200px;overflow-y:auto">'+escHtml(ofStr)+'</div>';
-  }
-  if(detail.env!==undefined){
-    var envStr=typeof detail.env==='object'?Object.entries(detail.env).map(function(e){return e[0]+'='+e[1]}).join('\n'):String(detail.env);
-    html+='<div class="dk">'+t("envVars")+'</div><div class="dv" style="white-space:pre-wrap;max-height:200px;overflow-y:auto">'+escHtml(envStr)+'</div>';
-  }
-  if(detail.io!==undefined){
-    var ioStr=typeof detail.io==='object'?JSON.stringify(detail.io,null,2):String(detail.io);
-    html+='<div class="dk">'+t("ioStats")+'</div><div class="dv" style="white-space:pre-wrap">'+escHtml(ioStr)+'</div>';
-  }
-  var known={cmdline:1,status:1,cwd:1,open_files:1,env:1,io:1};
-  if(typeof detail==='object'&&!Array.isArray(detail)){
-    Object.keys(detail).forEach(function(k){
-      if(!known[k]){
-        var val=typeof detail[k]==='object'?JSON.stringify(detail[k],null,2):String(detail[k]);
-        html+='<div class="dk">'+escHtml(k)+'</div><div class="dv" style="white-space:pre-wrap">'+escHtml(val)+'</div>';
-      }
-    });
-  }
+  var fields=[['cmdline',t("cmdline")],['cwd','Working Dir'],['open_files',t("openFiles")],['status',t("status")],['env',t("envVars")],['io',t("ioStats")]];
+  fields.forEach(function(pair){
+    var key=pair[0],label=pair[1];
+    if(detail[key]!==undefined&&detail[key]!==null){
+      var val=typeof detail[key]==='object'?JSON.stringify(detail[key],null,2):String(detail[key]);
+      if(val.length>500) val=val.substring(0,500)+'...';
+      var style=(key==='status'||key==='env'||key==='io')?' style="white-space:pre-wrap;max-height:200px;overflow-y:auto;font-size:11px"':'';
+      html+='<div class="dk">'+label+'</div><div class="dv"'+style+'>'+escHtml(val)+'</div>';
+    }
+  });
   html+='</div>';
   return html;
 }

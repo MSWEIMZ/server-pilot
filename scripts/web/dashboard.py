@@ -103,34 +103,87 @@ def get_tasks(ssh, procs):
     return tasks
 
 def get_process_log(ssh, pid, lines=100):
-    """Get detailed log output for a specific process."""
-    # Try multiple sources
-    sources = [
-        f"tail -{lines} /proc/{pid}/fd/1 2>/dev/null",
-        f"tail -{lines} /proc/{pid}/fd/2 2>/dev/null",
-    ]
-    logs = []
-    for src in sources:
-        raw = _cmd(ssh, src, t=10)
-        if raw and raw.strip():
-            logs.append(raw)
+    """Get process logs. Tries log files first, falls back to /proc."""
+    # Step 1: Get basic info (fast, non-blocking)
+    info_cmd = (
+        "echo __CMDLINE__; cat /proc/" + str(pid) + "/cmdline 2>/dev/null | tr '\\0' ' '; echo; "
+        "echo __CWD__; readlink /proc/" + str(pid) + "/cwd 2>/dev/null; "
+        "echo __FD__; ls /proc/" + str(pid) + "/fd/ 2>/dev/null | wc -l; "
+        "echo __STATUS__; head -10 /proc/" + str(pid) + "/status 2>/dev/null; "
+        "echo __ENV__; cat /proc/" + str(pid) + "/environ 2>/dev/null | tr '\\0' '\\n' | grep -iE 'CUDA|PYTHON|TRAIN|MODEL|GPU' | head -10; "
+        "echo __IO__; cat /proc/" + str(pid) + "/io 2>/dev/null; "
+        "echo __END__"
+    )
+    raw = _cmd(ssh, info_cmd, t=10)
+    sections = {}
+    if raw:
+        cur_key = None
+        cur_lines = []
+        for line in raw.split("\n"):
+            s = line.strip()
+            if s.startswith("__") and s.endswith("__"):
+                if cur_key:
+                    sections[cur_key] = "\n".join(cur_lines).strip()
+                cur_key = s.strip("_").lower()
+                cur_lines = []
+            elif cur_key is not None:
+                cur_lines.append(line)
+        if cur_key:
+            sections[cur_key] = "\n".join(cur_lines).strip()
 
-    # Also get process details
-    detail = _cmd(ssh, f"""
-echo "=== Process Info ==="
-cat /proc/{pid}/cmdline 2>/dev/null | tr '\\0' ' '
-echo ""
-echo "=== Status ==="
-cat /proc/{pid}/status 2>/dev/null
-echo "=== Open Files (top 20) ==="
-ls -la /proc/{pid}/fd/ 2>/dev/null | tail -20
-echo "=== Environment (training related) ==="
-cat /proc/{pid}/environ 2>/dev/null | tr '\\0' '\\n' | grep -iE 'CUDA|PYTHON|TRAIN|EPOCH|MODEL|GPU' | head -10
-echo "=== IO Stats ==="
-cat /proc/{pid}/io 2>/dev/null
-""", t=10)
+    # Step 2: Find log files (non-blocking alternative to /proc/PID/fd/1 pipe)
+    cwd = sections.get("cwd", "")
+    stdout_text = ""
+    if cwd:
+        log_files = _cmd(ssh, "find " + cwd + " -maxdepth 2 -name '*.log' -mmin -300 -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -3", t=8)
+        if log_files:
+            for lf in log_files.strip().split("\n"):
+                parts = lf.split(" ", 1)
+                if len(parts) >= 2:
+                    log_path = parts[1].strip()
+                    content = _cmd(ssh, "tail -" + str(lines) + " '" + log_path + "' 2>/dev/null", t=8)
+                    if content and content.strip():
+                        stdout_text = "[Log file: " + log_path + "]\n" + content
+                        break
 
-    return {"stdout": logs[0] if len(logs) > 0 else "", "stderr": logs[1] if len(logs) > 1 else "", "detail": detail or ""}
+    # Fallback: try /proc with timeout (may hang for pipes)
+    if not stdout_text:
+        stdout_text = _cmd(ssh, "timeout 3 tail -" + str(lines) + " /proc/" + str(pid) + "/fd/1 2>/dev/null || echo ''", t=8)
+
+    return {
+        "stdout": stdout_text or "",
+        "stderr": "",
+        "detail": {
+            "cmdline": sections.get("cmdline", ""),
+            "cwd": cwd,
+            "open_files": sections.get("fd", "0"),
+            "status": sections.get("status", ""),
+            "env": sections.get("env", ""),
+            "io": sections.get("io", ""),
+        }
+    }
+
+# Cached SSH connection for log API
+_ssh_cache = {"ssh": None, "host": "", "time": 0}
+
+def get_ssh():
+    """Get or create cached SSH connection."""
+    global _ssh_cache
+    srv = resolve_server(config, server_name)
+    host = srv.get("host","")
+    now = time.time()
+    if _ssh_cache["ssh"] and _ssh_cache["host"] == host and now - _ssh_cache["time"] < 120:
+        try:
+            _ssh_cache["ssh"].exec_command("echo ok", timeout=3)
+            return _ssh_cache["ssh"]
+        except:
+            pass
+    if _ssh_cache["ssh"]:
+        try: _ssh_cache["ssh"].close()
+        except: pass
+    ssh = _connect(host, srv.get("port",22), srv.get("username","root"), srv.get("password",""), srv.get("key_file",""))
+    _ssh_cache = {"ssh": ssh, "host": host, "time": now}
+    return ssh
 
 def poll():
     global cached
@@ -138,7 +191,7 @@ def poll():
     while True:
         try:
             srv = resolve_server(config, server_name)
-            ssh = _connect(srv.get("host",""),srv.get("port",22),srv.get("username","root"),srv.get("password",""),srv.get("key_file",""))
+            ssh = get_ssh()
             try:
                 g = gpu_info(ssh)
                 t = train_procs(ssh)
@@ -175,12 +228,9 @@ class H(BaseHTTPRequestHandler):
             if not pid:
                 self.send_json({"error": "pid required"}, 400); return
             try:
-                srv = resolve_server(config, server_name)
-                ssh = _connect(srv.get("host",""),srv.get("port",22),srv.get("username","root"),srv.get("password",""),srv.get("key_file",""))
-                try:
-                    log_data = get_process_log(ssh, int(pid), lines)
-                    log_data["pid"] = pid
-                finally: ssh.close()
+                ssh = get_ssh()
+                log_data = get_process_log(ssh, int(pid), lines)
+                log_data["pid"] = pid
                 self.send_json(log_data)
             except Exception as e:
                 self.send_json({"error": str(e)}, 500)
