@@ -65,6 +65,34 @@ Features:
 - Auto-refreshes every 10 seconds
 - Dark theme, responsive design
 
+
+## File Operations
+
+View, edit, browse, search, and sync remote files.
+
+```bash
+# View file
+python scripts/file_ops.py cat /remote/file
+python scripts/file_ops.py cat /remote/file -n 50 -t
+
+# List directory
+python scripts/file_ops.py ls /remote/dir
+python scripts/file_ops.py ls /remote/dir -t            # Tree
+
+# Edit remote file (downloads, opens editor, uploads with backup)
+python scripts/file_ops.py edit /remote/file
+python scripts/file_ops.py edit /remote/file --editor code
+
+# Search files
+python scripts/file_ops.py search /remote/dir --name "*.py" --grep "train"
+
+# Sync directories
+python scripts/file_ops.py sync-up ./local/dir /remote/dir
+python scripts/file_ops.py sync-down /remote/dir ./local/dir
+
+# Compare files
+python scripts/file_ops.py diff /remote/file ./local/file
+```
 ## Paths
 
 All `scripts/` paths are relative to this skill directory: `~/.codex/skills/server-pilot/scripts/`.
