@@ -1,117 +1,119 @@
-﻿---
+---
 name: server-pilot
-description: "Remote server management for Codex: SSH commands, GPU monitoring, training progress tracking with epoch/loss/accuracy parsing, and file transfer. Supports multi-server configs, SSH key auth, and continuous monitoring / watch mode. Use when the user asks to check server status, GPU usage, training progress, run remote commands, upload/download files, or mentions server/SSH/GPU/training/监控/服务器/训练."
+description: "Remote server management via SSH. Use when the user types /server-pilot, mentions server/SSH/GPU/训练/服务器, or wants to run commands on a remote server. Supports password and key auth, multi-server configs, GPU monitoring, training tracking, file operations, and background tasks."
 ---
 
 # Server Pilot
 
-Execute remote commands, monitor GPU, and track training progress via SSH.
+## IMPORTANT: First Action When Triggered
 
-## Quick Reference
+When this skill is triggered (via /server-pilot or any server-related request):
 
-| Action | Command |
-|--------|---------|
-| Full status | `python scripts/server_monitor.py` |
-| GPU only | `python scripts/server_monitor.py --gpu` |
-| Training + logs | `python scripts/server_monitor.py --train --logs` |
-| JSON output | `python scripts/server_monitor.py --json` |
-| Remote command | `python scripts/ssh_exec.py "command"` |
-| Upload file | `python scripts/ssh_exec.py --upload ./local /remote/path` |
-| Download file | `python scripts/ssh_exec.py --download /remote/path ./local` |
-| List servers | `python scripts/ssh_exec.py --list-servers` |
+1. **Read the current config**: Run cat scripts/server_config.json to get server info
+2. **Connect immediately**: Run chcp 65001 & python scripts/server_monitor.py to test connection and show status
+3. **If connection fails**: Ask user for new host/port/username/password, then update scripts/server_config.json with the new values using the format below
 
-## Windows Note
+### Config File Format (scripts/server_config.json)
 
-Prefix monitor commands with `chcp 65001` to avoid emoji encoding errors:
-```
-chcp 65001 & python scripts/server_monitor.py
-```
+Single server:
+`json
+{
+  "host": "your-server.com",
+  "port": 22,
+  "username": "root",
+  "password": "your-password"
+}
+`
 
-## Multi-Server
+Multi server:
+`json
+{
+  "defaults": { "username": "root" },
+  "servers": {
+    "gpu-box": { "host": "server1.com", "port": 26628, "password": "pass1" },
+    "train-box": { "host": "server2.com", "port": 22, "password": "pass2" }
+  }
+}
+`
 
-Configure `scripts/server_config.json` with a `servers` key. Use `--server name` to select.
-See `references/workflow.md` for examples.
+When user provides new server info (host, port, password etc), **immediately update** scripts/server_config.json and confirm connection works.
 
-## Auth
+### Connection Method
 
-SSH key auth is preferred. Falls back to password. Auto-discovers `~/.ssh/id_rsa` or `id_ed25519`.
+This skill uses **paramiko** (Python SSH library) — NOT native ssh command.
+- Passwords are read from config file automatically, no interactive input needed
+- Includes keepalive (15s) and auto-retry (3 attempts)
+- Works on Windows without sshpass or key setup
 
-## Training Log Parsing
+## All Commands
 
-The `--logs` flag parses `/proc/PID/fd` for common training output patterns:
-- Epoch: `Epoch 5/100`, `[5/100]`
-- Loss: `loss: 0.1234`, `Loss= 0.1234`
-- Accuracy: `acc: 95.2`, `accuracy=0.952`
-- Learning rate: `lr: 1e-4`
-- Step/iteration: `Step 100/5000`
-- ETA: `ETA: 2h30m`
+All commands run from the skill directory. Prefix with chcp 65001 & on Windows.
 
+### Server Status
 
-## Web Dashboard
+`ash
+python scripts/server_monitor.py              # Full status
+python scripts/server_monitor.py --gpu        # GPU only
+python scripts/server_monitor.py --train --logs # Training + logs
+python scripts/server_monitor.py --json       # JSON output
+python scripts/server_monitor.py --watch      # Continuous (30s refresh)
+`
 
-Launch a real-time web dashboard to monitor your server in the browser:
+### Remote Commands
+
+`ash
+python scripts/ssh_exec.py "your command"     # Run any command
+python scripts/ssh_exec.py --upload ./local /remote/path   # Upload
+python scripts/ssh_exec.py --download /remote/path ./local # Download
+`
+
+### File Operations
+
+`ash
+python scripts/file_ops.py cat /remote/file              # View file
+python scripts/file_ops.py cat /remote/file -n 50 -t     # Last 50 lines
+python scripts/file_ops.py ls /remote/dir                # List dir
+python scripts/file_ops.py ls /remote/dir -t             # Tree view
+python scripts/file_ops.py edit /remote/file             # Edit locally, upload with backup
+python scripts/file_ops.py search /remote/dir --name "*.py" --grep "train"
+python scripts/file_ops.py sync-up ./local/dir /remote/dir     # Upload directory
+python scripts/file_ops.py sync-down /remote/dir ./local/dir   # Download directory
+python scripts/file_ops.py diff /remote/file ./local/file      # Compare
+python scripts/file_ops.py big-upload ./big.zip /remote/big.zip   # Large file upload (resume)
+python scripts/file_ops.py big-download /remote/big.zip ./big.zip # Large file download (resume)
+`
+
+### Background Tasks
+
+`ash
+python scripts/task_mgr.py run "python train.py --epochs 100"           # Run in background
+python scripts/task_mgr.py run "python train.py" --name train-v1 --tool screen --workdir /root/project
+python scripts/task_mgr.py list                                         # List tasks
+python scripts/task_mgr.py status                                       # Detailed status
+python scripts/task_mgr.py logs train-v1                                # View logs
+python scripts/task_mgr.py logs train-v1 -f                             # Follow logs
+python scripts/task_mgr.py logs train-v1 -n 200                         # Last 200 lines
+python scripts/task_mgr.py stop train-v1                                # Stop task
+python scripts/task_mgr.py stop --all                                   # Stop all
+`
+
+### Web Dashboard
 
 `ash
 python scripts/web/dashboard.py              # Start on port 8765
 python scripts/web/dashboard.py --port 9000  # Custom port
-python scripts/web/dashboard.py --server gpu-box  # Multi-server
-python scripts/web/dashboard.py --no-browser  # Don't auto-open
+python scripts/web/dashboard.py --no-browser # Don't auto-open
 `
 
-Features:
-- Real-time GPU status (temp, power, VRAM, utilization)
-- Training process list with epoch/loss/accuracy parsing
-- System resources (CPU, memory, disk, load)
-- Auto-refreshes every 10 seconds
-- Dark theme, responsive design
+## Multi-Server
 
+Use --server name to select: python scripts/server_monitor.py --server gpu-box
+See scripts/server_config.example.json for config format.
 
-## File Operations
+## Training Log Parsing
 
-View, edit, browse, search, and sync remote files.
+Parses /proc/PID/fd for: Epoch, Loss, Accuracy, Learning rate, Step, ETA
 
-```bash
-# View file
-python scripts/file_ops.py cat /remote/file
-python scripts/file_ops.py cat /remote/file -n 50 -t
+## Skill Directory
 
-# List directory
-python scripts/file_ops.py ls /remote/dir
-python scripts/file_ops.py ls /remote/dir -t            # Tree
-
-# Edit remote file (downloads, opens editor, uploads with backup)
-python scripts/file_ops.py edit /remote/file
-python scripts/file_ops.py edit /remote/file --editor code
-
-# Search files
-python scripts/file_ops.py search /remote/dir --name "*.py" --grep "train"
-
-# Sync directories
-python scripts/file_ops.py sync-up ./local/dir /remote/dir
-python scripts/file_ops.py sync-down /remote/dir ./local/dir
-
-# Compare files
-python scripts/file_ops.py diff /remote/file ./local/file
-```
-
-## Background Tasks
-
-Run commands that survive SSH disconnect, list/status, view logs, and stop.
-
-```bash
-python scripts/task_mgr.py run "python train.py --epochs 100"
-python scripts/task_mgr.py run "python train.py" --name my-training --tool screen --workdir /root/project
-python scripts/task_mgr.py list
-python scripts/task_mgr.py status
-python scripts/task_mgr.py logs my-training
-python scripts/task_mgr.py logs my-training -f
-python scripts/task_mgr.py logs my-training -n 200
-python scripts/task_mgr.py stop my-training
-python scripts/task_mgr.py stop --all
-python scripts/task_mgr.py --server gpu-box run "python train.py"
-```
-## Paths
-
-All `scripts/` paths are relative to this skill directory: `~/.codex/skills/server-pilot/scripts/`.
-
-
+All scripts/ paths are relative to: ~/.codex/skills/my-server-ssh/scripts/
