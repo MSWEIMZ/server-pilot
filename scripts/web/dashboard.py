@@ -167,15 +167,17 @@ def get_process_log(ssh, pid, lines=100):
 _ssh_cache = {"ssh": None, "host": "", "time": 0}
 
 def get_ssh():
-    """Get or create cached SSH connection."""
+    """Get or create cached SSH connection with keepalive."""
     global _ssh_cache
     srv = resolve_server(config, server_name)
     host = srv.get("host","")
     now = time.time()
-    if _ssh_cache["ssh"] and _ssh_cache["host"] == host and now - _ssh_cache["time"] < 120:
+    if _ssh_cache["ssh"] and _ssh_cache["host"] == host and now - _ssh_cache["time"] < 60:
         try:
-            _ssh_cache["ssh"].exec_command("echo ok", timeout=3)
-            return _ssh_cache["ssh"]
+            t = _ssh_cache["ssh"].get_transport()
+            if t and t.is_active():
+                _ssh_cache["time"] = now
+                return _ssh_cache["ssh"]
         except:
             pass
     if _ssh_cache["ssh"]:
@@ -192,21 +194,23 @@ def poll():
         try:
             srv = resolve_server(config, server_name)
             ssh = get_ssh()
-            try:
-                g = gpu_info(ssh)
-                t = train_procs(ssh)
-                lg = {}
-                for p in t:
-                    li = parse_logs(ssh, p["pid"])
-                    if li: lg[str(p["pid"])] = li
-                s = sys_info(ssh)
-                pr = get_procs(ssh)
-                n = get_net(ssh)
-                tk = get_tasks(ssh, t)
-                cached = {"gpus":g,"training":t,"logs":lg,"system":s,"processes":pr,"network":n,"tasks":tk,"error":None,"updated":time.time(),"server_name":srv.get("host","")}
-            finally: ssh.close()
+            g = gpu_info(ssh)
+            t = train_procs(ssh)
+            lg = {}
+            for p in t:
+                li = parse_logs(ssh, p["pid"])
+                if li: lg[str(p["pid"])] = li
+            s = sys_info(ssh)
+            pr = get_procs(ssh)
+            n = get_net(ssh)
+            tk = get_tasks(ssh, t)
+            cached = {"gpus":g,"training":t,"logs":lg,"system":s,"processes":pr,"network":n,"tasks":tk,"error":None,"updated":time.time(),"server_name":srv.get("host","")}
         except Exception as e:
             cached["error"] = str(e); cached["updated"] = time.time()
+            if _ssh_cache.get("ssh"):
+                try: _ssh_cache["ssh"].close()
+                except: pass
+                _ssh_cache["ssh"] = None
         time.sleep(poll_interval)
 
 class H(BaseHTTPRequestHandler):

@@ -34,21 +34,32 @@ def resolve_server(cfg, name=None):
             "username": cfg.get("username", "root"), "password": cfg.get("password", ""),
             "key_file": cfg.get("key_file", "")}
 
-def _connect(host, port, user, pwd=None, key=None):
+def _connect(host, port, user, pwd=None, key=None, retries=3):
     paramiko = ensure_paramiko()
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    kw = {"hostname": host, "port": int(port), "username": user, "timeout": 15}
-    if key and os.path.exists(os.path.expanduser(key)):
-        kw["key_filename"] = os.path.expanduser(key)
-    elif pwd:
-        kw["password"] = pwd
-    else:
-        for k in ["~/.ssh/id_rsa", "~/.ssh/id_ed25519", "~/.ssh/id_ecdsa"]:
-            if os.path.exists(os.path.expanduser(k)): kw["key_filename"] = os.path.expanduser(k); break
-        else:
-            print("Error: No SSH key or password.", file=sys.stderr); sys.exit(1)
-    ssh.connect(**kw); return ssh
+    for attempt in range(retries):
+        try:
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            kw = {"hostname": host, "port": int(port), "username": user, "timeout": 15}
+            if key and os.path.exists(os.path.expanduser(key)):
+                kw["key_filename"] = os.path.expanduser(key)
+            elif pwd:
+                kw["password"] = pwd
+            else:
+                for k in ["~/.ssh/id_rsa", "~/.ssh/id_ed25519", "~/.ssh/id_ecdsa"]:
+                    if os.path.exists(os.path.expanduser(k)): kw["key_filename"] = os.path.expanduser(k); break
+                else:
+                    print("Error: No SSH key or password.", file=sys.stderr); sys.exit(1)
+            ssh.connect(**kw)
+            transport = ssh.get_transport()
+            if transport:
+                transport.set_keepalive(15)
+            return ssh
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(2 * (attempt + 1))
+            else:
+                raise
 
 def _cmd(ssh, c, t=15):
     try:
