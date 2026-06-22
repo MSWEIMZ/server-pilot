@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -352,21 +352,19 @@ function toggleTheme(){
 
 /* ===== SVG Chart Helpers ===== */
 function svgTempGauge(temp){
-  var pct=Math.min(temp,100);
-  var angle=pct/100*180;
-  var r=50,cx=60,cy=55;
-  var startAngle=Math.PI;
-  var endAngle=startAngle-angle*Math.PI/180;
-  var x1=cx+r*Math.cos(startAngle),y1=cy-r*Math.sin(startAngle);
-  var x2=cx+r*Math.cos(endAngle),y2=cy-r*Math.sin(endAngle);
-  var largeArc=angle>180?1:0;
+  var pct=Math.max(0,Math.min(temp,100));
+  var r=50,cx=60,cy=58;
+  function polar(a){return {x:cx+r*Math.cos(a*Math.PI/180),y:cy-r*Math.sin(a*Math.PI/180)}}
+  var p0=polar(180);
+  var p1=polar(180-pct*1.8);
   var color=temp<60?'#10b981':temp<80?'#f59e0b':'#ef4444';
-  var bgArc='<path d="M 10 55 A 50 50 0 0 1 110 55" fill="none" stroke="var(--bg)" stroke-width="10" stroke-linecap="round"/>';
+  var bgArc='<path d="M '+p0.x+' '+p0.y+' A '+r+' '+r+' 0 1 1 '+(cx+r)+' '+p0.y+'" fill="none" stroke="var(--bg4)" stroke-width="10" stroke-linecap="round"/>';
   var fgArc='';
   if(pct>0){
-    fgArc='<path d="M '+x1.toFixed(1)+' '+y1.toFixed(1)+' A '+r+' '+r+' 0 '+largeArc+' 0 '+x2.toFixed(1)+' '+y2.toFixed(1)+'" fill="none" stroke="'+color+'" stroke-width="10" stroke-linecap="round"/>';
+    var large=pct>50?1:0;
+    fgArc='<path d="M '+p0.x.toFixed(1)+' '+p0.y.toFixed(1)+' A '+r+' '+r+' 0 '+large+' 1 '+p1.x.toFixed(1)+' '+p1.y.toFixed(1)+'" fill="none" stroke="'+color+'" stroke-width="10" stroke-linecap="round"/>';
   }
-  return '<div class="gauge-wrap"><svg width="120" height="72" viewBox="0 0 120 72">'+bgArc+fgArc+'<text x="60" y="52" text-anchor="middle" fill="'+color+'" font-size="18" font-weight="700" font-family="Inter,system-ui">'+temp+'&deg;</text><text x="60" y="66" text-anchor="middle" fill="var(--text3)" font-size="9" font-family="Inter,system-ui">TEMP</text></svg></div>';
+  return '<div class="gauge-wrap"><svg width="120" height="72" viewBox="0 0 120 72">'+bgArc+fgArc+'<text x="'+cx+'" y="'+(cy-8)+'" text-anchor="middle" fill="'+color+'" font-size="18" font-weight="700" font-family="Inter,system-ui">'+temp+'&deg;</text><text x="'+cx+'" y="'+(cy+6)+'" text-anchor="middle" fill="var(--text3)" font-size="9" font-family="Inter,system-ui">TEMP</text></svg></div>';
 }
 
 function svgVramPie(pct){
