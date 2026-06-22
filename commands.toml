@@ -1,0 +1,60 @@
+# Server Pilot - Slash Command Definitions
+# These commands are recognized when the user types them in Codex.
+# Codex will parse the command and execute the corresponding script.
+
+[commands]
+
+[commands."/server"]
+description = "查看服务器完整状态（GPU、训练、系统）"
+action = "python scripts/server_monitor.py"
+
+[commands."/gpu"]
+description = "查看 GPU 状态"
+action = "python scripts/server_monitor.py --gpu"
+
+[commands."/train"]
+description = "查看训练进程和日志解析"
+action = "python scripts/server_monitor.py --train --logs"
+
+[commands."/tasks"]
+description = "查看后台任务列表"
+action = "python scripts/task_mgr.py list"
+
+[commands."/run"]
+description = "在后台运行命令"
+usage = "/run <command> [--name <name>] [--tool <tmux|screen|nohup>]"
+action = "python scripts/task_mgr.py run"
+
+[commands."/logs"]
+description = "查看任务日志"
+usage = "/logs <task-name> [-n <lines>] [-f]"
+action = "python scripts/task_mgr.py logs"
+
+[commands."/stop"]
+description = "停止任务"
+usage = "/stop <task-name> | --all"
+action = "python scripts/task_mgr.py stop"
+
+[commands."/upload"]
+description = "上传文件到服务器"
+usage = "/upload <local-path> <remote-path>"
+action = "python scripts/ssh_exec.py --upload"
+
+[commands."/download"]
+description = "从服务器下载文件"
+usage = "/download <remote-path> <local-path>"
+action = "python scripts/ssh_exec.py --download"
+
+[commands."/ls"]
+description = "查看远程目录"
+usage = "/ls <remote-path> [-t tree]"
+action = "python scripts/file_ops.py ls"
+
+[commands."/cat"]
+description = "查看远程文件内容"
+usage = "/cat <remote-path> [-n <lines>]"
+action = "python scripts/file_ops.py cat"
+
+[commands."/dash"]
+description = "打开 Web 仪表盘"
+action = "python scripts/web/dashboard.py"
