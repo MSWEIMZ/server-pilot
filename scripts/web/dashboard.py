@@ -250,6 +250,11 @@ class H(BaseHTTPRequestHandler):
 
     def log_message(self, *a): pass
 
+def port_in_use(port):
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
 def main():
     global config, server_name, poll_interval
     pa = argparse.ArgumentParser()
@@ -257,6 +262,12 @@ def main():
     pa.add_argument("--server", "-s"); pa.add_argument("--no-browser", action="store_true")
     pa.add_argument("--interval", type=int, default=10)
     a = pa.parse_args()
+
+    if port_in_use(a.port):
+        print(f"Dashboard already running at http://localhost:{a.port}")
+        if not a.no_browser: webbrowser.open(f"http://localhost:{a.port}")
+        return
+
     config = load_config(); server_name = a.server; poll_interval = a.interval
     srv = resolve_server(config, server_name)
     if not srv.get("host"): print("Error: No host.", file=sys.stderr); sys.exit(1)
