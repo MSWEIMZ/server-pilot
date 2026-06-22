@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Background task manager for remote servers.
 
 Run long tasks on the server that survive SSH disconnection.
@@ -83,6 +83,22 @@ def _cmd(ssh, cmd, t=15):
     except Exception as e:
         return f"Error: {e}"
 
+def _upload_script(ssh, remote_path, content):
+    """Write script content to a local temp file, then upload via SFTP."""
+    import tempfile
+    tmp = None
+    try:
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False, encoding='utf-8')
+        tmp.write(content)
+        tmp.close()
+        sftp = ssh.open_sftp()
+        sftp.put(tmp.name, remote_path)
+        sftp.close()
+        _cmd(ssh, f"chmod +x {remote_path}")
+    finally:
+        if tmp and os.path.exists(tmp.name):
+            os.unlink(tmp.name)
+
 def detect_tool(ssh):
     """Detect available session tool: tmux > screen > nohup."""
     if "tmux" in _cmd(ssh, "which tmux 2>/dev/null", t=3):
@@ -126,8 +142,7 @@ def run_task(ssh, command, name=None, tool=None, workdir=None, log_dir="/tmp/sp_
     elif tool == "screen":
         session = f"sp_{name}"
         wrapper = f"{log_dir}/{name}.sh"
-        _cmd(ssh, f"cat > {wrapper} << 'SPX'\n#!/bin/bash\n{cd_prefix}{command} 2>&1 | tee {log_file}\nSPX")
-        _cmd(ssh, f"chmod +x {wrapper}")
+        _upload_script(ssh, wrapper, f"#!/bin/bash\n{cd_prefix}{command} 2>&1 | tee {log_file}")
         _cmd(ssh, f"screen -dmS {session} bash {wrapper}")
         _cmd(ssh, f"screen -ls | grep {session} | head -1 | awk '{{print $1}}' > {pid_file} 2>/dev/null")
         print(f"  Started in screen session: {session}")
@@ -135,8 +150,7 @@ def run_task(ssh, command, name=None, tool=None, workdir=None, log_dir="/tmp/sp_
     
     else:  # nohup
         wrapper = f"{log_dir}/{name}.sh"
-        _cmd(ssh, f"cat > {wrapper} << 'SPX'\n#!/bin/bash\n{cd_prefix}{command}\nSPX")
-        _cmd(ssh, f"chmod +x {wrapper}")
+        _upload_script(ssh, wrapper, f"#!/bin/bash\n{cd_prefix}{command}")
         _cmd(ssh, f"nohup bash {wrapper} > {log_file} 2>&1 &")
         pid_out = _cmd(ssh, f"sleep 0.5 && cat /proc/$(ps -o ppid= -p $ 2>/dev/null)/task/*/children 2>/dev/null || echo ''")
         _cmd(ssh, f"pgrep -f '{wrapper}' > {pid_file} 2>/dev/null")
