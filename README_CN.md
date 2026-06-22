@@ -128,20 +128,28 @@ server-pilot/
 ├── agents/
 │   └── openai.yaml                   # Codex UI 元数据
 └── scripts/
-    ├── ssh_exec.py                   # SSH 命令执行工具
+    ├── ssh_exec.py                   # SSH 命令执行（上传/下载/运行）
     ├── server_monitor.py             # GPU / 训练状态监控
+    ├── task_mgr.py                   # 后台任务管理（tmux/screen/nohup）
+    ├── file_ops.py                   # 文件操作：cat、ls、编辑、搜索、同步、大文件续传
     ├── server_config.json            # 你的配置（已 git 忽略）
-    └── server_config.example.json    # 配置示例
+    ├── server_config.example.json    # 配置示例
+    └── web/
+        ├── dashboard.py              # Web 仪表盘后端
+        └── dashboard.html            # 仪表盘前端（SVG 仪表、中英文、主题切换）
 ```
 
 ## 🤝 参与贡献
 
 欢迎 Issue 和 PR！
 
-- [ ] 多服务器支持
-- [ ] 训练 loss/accuracy 日志解析
+- [x] 多服务器支持
+- [x] 训练 loss/accuracy 日志解析
+- [x] Web 仪表盘（GPU 仪表、训练追踪、系统概览、中英文切换）
+- [x] 后台任务管理（tmux/screen/nohup 自动检测）
+- [x] 文件操作（大文件断点续传）
 - [ ] GPU 过热时推送钉钉/Slack 告警
-- [ ] Web 仪表盘
+- [ ] 一键部署服务器环境
 
 ## 📄 开源协议
 

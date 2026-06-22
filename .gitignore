@@ -5,3 +5,11 @@ scripts/server_config.json
 __pycache__/
 *.pyc
 *.pyo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Spurious root-level files
+1
+2

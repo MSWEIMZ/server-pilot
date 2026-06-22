@@ -1,3 +1,3 @@
 display_name: "Server Pilot"
-short_description: "🚀 One-command server control: SSH, GPU monitoring & training tracker"
-default_prompt: "Check my server status"
+short_description: "🚀 Remote server management: SSH, GPU monitoring, training tracker, file ops, background tasks"
+default_prompt: "/server-pilot"

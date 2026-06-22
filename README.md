@@ -126,20 +126,28 @@ server-pilot/
 ├── agents/
 │   └── openai.yaml                   # Codex UI metadata
 └── scripts/
-    ├── ssh_exec.py                   # SSH command executor
+    ├── ssh_exec.py                   # SSH command executor (upload/download/run)
     ├── server_monitor.py             # GPU & training monitor
+    ├── task_mgr.py                   # Background task manager (tmux/screen/nohup)
+    ├── file_ops.py                   # File ops: cat, ls, edit, search, sync, big-upload
     ├── server_config.json            # Your config (git-ignored)
-    └── server_config.example.json    # Example config
+    ├── server_config.example.json    # Example config
+    └── web/
+        ├── dashboard.py              # Web dashboard backend
+        └── dashboard.html            # Dashboard frontend (SVG gauges, i18n, themes)
 ```
 
 ## 🤝 Contributing
 
 Issues and PRs welcome!
 
-- [ ] Multi-server support
-- [ ] Training loss/accuracy log parsing
+- [x] Multi-server support
+- [x] Training loss/accuracy log parsing
+- [x] Web dashboard with real-time GPU gauges, training tracker, and system overview
+- [x] Background task manager (tmux/screen/nohup)
+- [x] File operations with large file resume upload/download
 - [ ] Slack / DingTalk alert on GPU overheat
-- [ ] Web dashboard
+- [ ] One-click server setup (auto-install dependencies)
 
 ## 📄 License
 
