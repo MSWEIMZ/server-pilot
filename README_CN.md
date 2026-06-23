@@ -58,14 +58,14 @@
 ### 1. 安装
 
 ```bash
-git clone https://github.com/MSWEIMZ/server-pilot.git ~/.codex/skills/server-pilot
+git clone https://github.com/MSWEIMZ/server-pilot.git ~/.codex/skills/my-server-ssh
 ```
 
 ### 2. 配置
 
 ```bash
-cp ~/.codex/skills/server-pilot/scripts/server_config.example.json \
-   ~/.codex/skills/server-pilot/scripts/server_config.json
+cp ~/.codex/skills/my-server-ssh/scripts/server_config.example.json \
+   ~/.codex/skills/my-server-ssh/scripts/server_config.json
 ```
 
 编辑 `server_config.json`，填入你的服务器信息：
