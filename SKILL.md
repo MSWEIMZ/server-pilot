@@ -63,10 +63,30 @@ python scripts/server_monitor.py --watch      # Continuous (30s refresh)
 
 ```bash
 python scripts/ssh_exec.py "your command"     # Run any command
-python scripts/ssh_exec.py --upload ./local /remote/path   # Upload
 python scripts/ssh_exec.py --download /remote/path ./local # Download
 python scripts/ssh_exec.py --list-servers     # List configured servers
 ```
+
+## Upload and Run (IMPORTANT)
+
+When uploading a local file to the server, **NEVER use ssh + heredoc** (PowerShell does not support heredoc syntax).
+**Always use upload_and_run.py** for uploading files:
+
+```bash
+# Upload only
+python scripts/upload_and_run.py ./local_script.py /remote/path/script.py
+
+# Upload and run
+python scripts/upload_and_run.py ./local_script.py /remote/path/script.py --run
+
+# Upload, run, with arguments
+python scripts/upload_and_run.py ./train.py /root/train.py --run --args "--epochs 100"
+
+# Custom Python interpreter
+python scripts/upload_and_run.py ./train.py /root/train.py --run --python /usr/bin/python3
+```
+
+This uses SFTP internally, no heredoc or shell escaping issues.
 
 ## File Operations
 
