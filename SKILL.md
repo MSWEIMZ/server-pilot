@@ -141,4 +141,4 @@ Parses `/proc/PID/fd` for: Epoch, Loss, Accuracy, Learning rate, Step, ETA
 
 ## Paths
 
-All `scripts/` paths are relative to: `~/.codex/skills/my-server-ssh/scripts/`
+All `scripts/` paths are relative to: `~/.qoderworkcn/skills/server-pilot/scripts/`
