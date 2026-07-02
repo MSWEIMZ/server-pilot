@@ -207,14 +207,26 @@ def get_tasks(ssh, procs):
     return tasks
 
 def get_process_log(ssh, pid, lines=100):
-    """Get process logs. Tries log files first, falls back to /proc."""
+    """Get process logs with improved file detection.
+
+    Strategy priority:
+    1. Check if stdout/stderr are redirected to real files (readlink fd/1, fd/2)
+    2. Parse cmdline for --output, --log_dir, --save_dir arguments
+    3. Search for log files matching PID in script directory
+    4. Search for log files matching script name
+    5. Fallback to /proc/PID/fd/1 (works if stdout is piped to a file)
+    """
+    pid_s = str(pid)
     info_cmd = (
-        "echo __CMDLINE__; cat /proc/" + str(pid) + "/cmdline 2>/dev/null | tr '\\0' ' '; echo; "
-        "echo __CWD__; readlink /proc/" + str(pid) + "/cwd 2>/dev/null; "
-        "echo __FD__; ls /proc/" + str(pid) + "/fd/ 2>/dev/null | wc -l; "
-        "echo __STATUS__; head -10 /proc/" + str(pid) + "/status 2>/dev/null; "
-        "echo __ENV__; cat /proc/" + str(pid) + "/environ 2>/dev/null | tr '\\0' '\\n' | grep -iE 'CUDA|PYTHON|TRAIN|MODEL|GPU' | head -10; "
-        "echo __IO__; cat /proc/" + str(pid) + "/io 2>/dev/null; "
+        "echo __CMDLINE__; cat /proc/" + pid_s + "/cmdline 2>/dev/null | tr '\\0' ' '; echo; "
+        "echo __CWD__; readlink /proc/" + pid_s + "/cwd 2>/dev/null; "
+        "echo __FD__; ls /proc/" + pid_s + "/fd/ 2>/dev/null | wc -l; "
+        "echo __STATUS__; head -10 /proc/" + pid_s + "/status 2>/dev/null; "
+        "echo __ENV__; cat /proc/" + pid_s + "/environ 2>/dev/null | tr '\\0' '\\n' | grep -iE 'CUDA|PYTHON|TRAIN|MODEL|GPU|OUTPUT|LOG' | head -10; "
+        "echo __IO__; cat /proc/" + pid_s + "/io 2>/dev/null; "
+        "echo __FDLINKS__; ls -l /proc/" + pid_s + "/fd/ 2>/dev/null | grep -v socket | grep -v pipe | grep -v 'anon_inode' | head -20; "
+        "echo __STDOUT__; readlink /proc/" + pid_s + "/fd/1 2>/dev/null; "
+        "echo __STDERR__; readlink /proc/" + pid_s + "/fd/2 2>/dev/null; "
         "echo __END__"
     )
     raw = _cmd(ssh, info_cmd, t=10)
@@ -236,13 +248,35 @@ def get_process_log(ssh, pid, lines=100):
 
     cmdline = sections.get("cmdline", "")
     cwd = sections.get("cwd", "")
-    stdout_text = ""
+    stdout_target = sections.get("stdout", "")
+    stderr_target = sections.get("stderr", "")
 
+    # ── 1. Check if stdout/stderr redirect to real files ──
+    stdout_text = ""
+    stderr_text = ""
+
+    def _is_real_file(path):
+        """Check if fd target is a real file (not terminal, pipe, socket)."""
+        if not path:
+            return False
+        dev_prefixes = ("/dev/", "pipe:", "socket:", "anon_inode:")
+        return not any(path.startswith(p) for p in dev_prefixes)
+
+    if _is_real_file(stdout_target):
+        content = _cmd(ssh, "tail -" + str(lines) + " '" + stdout_target + "' 2>/dev/null", t=8)
+        if content and content.strip():
+            stdout_text = "[stdout → " + stdout_target + "]\n" + content
+
+    if _is_real_file(stderr_target):
+        content = _cmd(ssh, "tail -" + str(lines) + " '" + stderr_target + "' 2>/dev/null", t=8)
+        if content and content.strip():
+            stderr_text = "[stderr → " + stderr_target + "]\n" + content
+
+    # ── 2. Extract script info from cmdline ──
     script_path = ""
-    mode = ""
-    mm = re.search(r'--mode\s+(\w+)', cmdline)
-    if mm:
-        mode = mm.group(1)
+    script_name = ""
+    output_dir = ""
+
     sm = re.search(r'(\S+\.py)', cmdline)
     if sm:
         raw_path = sm.group(1)
@@ -250,51 +284,114 @@ def get_process_log(ssh, pid, lines=100):
             script_path = raw_path
         elif cwd:
             script_path = cwd.rstrip("/") + "/" + raw_path
+        script_name = os.path.basename(script_path).replace(".py", "") if script_path else ""
 
-    candidates = []
-    if script_path:
-        script_dir = os.path.dirname(script_path)
-        raw = _cmd(ssh, "find " + script_dir + " -maxdepth 4 -name '*.log' -mmin -300 -type f -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -10", t=8)
-        if raw:
-            for lf in raw.strip().split("\n"):
-                parts = lf.split(" ", 1)
-                if len(parts) >= 2:
-                    candidates.append(parts[1].strip())
+    # Check for output directory arguments
+    for pattern in [
+        r'--output[_-]?dir\s+(\S+)', r'--log[_-]?dir\s+(\S+)',
+        r'--save[_-]?dir\s+(\S+)', r'--out[_-]?dir\s+(\S+)',
+        r'--output\s+(\S+)', r'-o\s+(\S+)',
+    ]:
+        m = re.search(pattern, cmdline, re.IGNORECASE)
+        if m:
+            d = m.group(1)
+            if d.startswith("/"):
+                output_dir = d
+            elif cwd:
+                output_dir = cwd.rstrip("/") + "/" + d
+            break
 
-    chosen = ""
-    if mode:
-        for c in candidates:
-            if mode.lower() in c.lower():
-                chosen = c; break
-    if not chosen and script_path:
-        script_name = os.path.basename(script_path).replace(".py", "")
-        for c in candidates:
-            if script_name.lower() in c.lower():
-                chosen = c; break
-    if not chosen and candidates:
-        script_dir_prefix = os.path.dirname(script_path) if script_path else ""
-        for c in candidates:
-            if script_dir_prefix and c.startswith(script_dir_prefix):
-                chosen = c; break
-
-    if chosen:
-        content = _cmd(ssh, "tail -" + str(lines) + " '" + chosen + "' 2>/dev/null", t=8)
-        if content and content.strip():
-            stdout_text = "[Log file: " + chosen + "]\n" + content
-
+    # ── 3. Search for log files if no stdout from redirection ──
     if not stdout_text:
-        stdout_text = _cmd(ssh, "timeout 3 tail -" + str(lines) + " /proc/" + str(pid) + "/fd/1 2>/dev/null || echo ''", t=8)
+        candidates = []
+        search_dirs = []
+        if output_dir:
+            search_dirs.append(output_dir)
+        if script_path:
+            sd = os.path.dirname(script_path)
+            if sd and sd not in search_dirs:
+                search_dirs.append(sd)
+        if cwd and cwd not in search_dirs:
+            search_dirs.append(cwd)
+
+        for sd in search_dirs:
+            raw = _cmd(ssh, "find " + sd + " -maxdepth 4 \\( -name '*.log' -o -name '*.txt' -o -name '*.out' \\) -mmin -300 -type f -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -15", t=8)
+            if raw:
+                for lf in raw.strip().split("\n"):
+                    parts = lf.split(" ", 1)
+                    if len(parts) >= 2:
+                        path = parts[1].strip()
+                        if path not in candidates:
+                            candidates.append(path)
+
+        # Priority matching: PID > script_name+mode > script_name > first candidate
+        chosen = ""
+
+        # Highest priority: log file containing this PID
+        for c in candidates:
+            if pid_s in os.path.basename(c):
+                chosen = c; break
+
+        # Second: match by script name
+        if not chosen and script_name:
+            mode = ""
+            mm = re.search(r'--mode\s+(\w+)', cmdline)
+            if mm:
+                mode = mm.group(1)
+            for c in candidates:
+                bn = os.path.basename(c).lower()
+                if script_name.lower() in bn:
+                    if mode and mode.lower() in bn:
+                        chosen = c; break
+            if not chosen:
+                for c in candidates:
+                    if script_name.lower() in os.path.basename(c).lower():
+                        chosen = c; break
+
+        # Third: match by output dir
+        if not chosen and output_dir:
+            for c in candidates:
+                if c.startswith(output_dir):
+                    chosen = c; break
+
+        # Fallback: first candidate (most recently modified)
+        if not chosen and candidates:
+            chosen = candidates[0]
+
+        if chosen:
+            content = _cmd(ssh, "tail -" + str(lines) + " '" + chosen + "' 2>/dev/null", t=8)
+            if content and content.strip():
+                stdout_text = "[Log file: " + chosen + "]\n" + content
+
+    # ── 4. Fallback: try /proc/PID/fd/1 directly ──
+    if not stdout_text:
+        stdout_text = _cmd(ssh, "timeout 3 tail -" + str(lines) + " /proc/" + pid_s + "/fd/1 2>/dev/null || echo ''", t=8)
+
+    # ── 5. Check fd links for any log-like open files ──
+    if not stdout_text and not stderr_text:
+        fdlinks = sections.get("fdlinks", "")
+        if fdlinks:
+            for line in fdlinks.split("\n"):
+                if "->" in line:
+                    target = line.split("->")[-1].strip()
+                    if target.endswith((".log", ".txt", ".out")) and _is_real_file(target):
+                        content = _cmd(ssh, "tail -" + str(lines) + " '" + target + "' 2>/dev/null", t=8)
+                        if content and content.strip():
+                            stdout_text = "[fd → " + target + "]\n" + content
+                            break
 
     return {
         "stdout": stdout_text or "",
-        "stderr": "",
+        "stderr": stderr_text or "",
         "detail": {
-            "cmdline": sections.get("cmdline", ""),
+            "cmdline": cmdline,
             "cwd": cwd,
             "open_files": sections.get("fd", "0"),
             "status": sections.get("status", ""),
             "env": sections.get("env", ""),
             "io": sections.get("io", ""),
+            "stdout_target": stdout_target,
+            "stderr_target": stderr_target,
         }
     }
 
