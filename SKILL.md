@@ -142,3 +142,221 @@ Parses `/proc/PID/fd` for: Epoch, Loss, Accuracy, Learning rate, Step, ETA
 ## Paths
 
 All `scripts/` paths are relative to: `~/.qoderworkcn/skills/server-pilot/scripts/`
+
+## Known Issues — Windows 路径映射 Bug
+
+**问题表现：** 在 Windows 环境下，`task_mgr.py`、`ssh_exec.py`、`upload_and_run.py` 三个脚本存在路径映射 bug。远程路径（如 `/root/...`）会被错误地映射到本地 `E:/Git/root/...`，导致命令在本地执行而非远程服务器，操作失败。
+
+**影响范围：** 所有在 Windows 上使用内置脚本的操作。
+
+**诊断方法：** 如果执行脚本后输出中出现本地路径（如 `E:/Git/root/...`）或命令立即返回无远程执行效果，说明触发了该 bug。
+
+**解决方案：** 遇到此 bug 时，放弃使用内置脚本，切换到下方的 Raw Paramiko Fallback 方案。
+
+---
+
+## Raw Paramiko Fallback (Windows 替代方案)
+
+当内置脚本因路径映射 bug 无法正常工作时，直接使用 Python paramiko 库进行 SSH/SFTP 操作。paramiko 已预装在环境中，可直接使用。
+
+### 基础连接模板
+
+```python
+import paramiko
+
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect('host', port=22, username='root', password='your-password', timeout=10)
+
+# ... 执行操作 ...
+
+ssh.close()
+```
+
+从配置文件读取连接信息：
+
+```python
+import json, os
+
+config_path = os.path.expanduser('~/.qoderworkcn/skills/server-pilot/scripts/server_config.json')
+with open(config_path) as f:
+    cfg = json.load(f)
+
+# 单服务器模式
+host, port = cfg['host'], cfg.get('port', 22)
+username, password = cfg['username'], cfg['password']
+
+# 或多服务器模式
+# server_cfg = cfg['servers']['gpu-box']
+# host, port = server_cfg['host'], server_cfg.get('port', 22)
+# username = cfg.get('defaults', {}).get('username', 'root')
+# password = server_cfg['password']
+```
+
+### SSH 执行命令（替换 `ssh_exec.py`）
+
+```python
+import paramiko
+
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect('host', port=22, username='root', password='...')
+
+stdin, stdout, stderr = ssh.exec_command('nvidia-smi')
+print(stdout.read().decode())
+print(stderr.read().decode())
+
+ssh.close()
+```
+
+获取命令退出码：
+
+```python
+stdin, stdout, stderr = ssh.exec_command('python train.py --epochs 100')
+exit_code = stdout.channel.recv_exit_status()
+output = stdout.read().decode()
+if exit_code != 0:
+    print(f'Command failed (code {exit_code}): {stderr.read().decode()}')
+```
+
+### SFTP 上传/下载（替换 `upload_and_run.py` 的上传部分）
+
+```python
+import paramiko
+
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect('host', port=22, username='root', password='...')
+sftp = ssh.open_sftp()
+
+# 上传单个文件
+sftp.put('./local_script.py', '/remote/path/script.py')
+
+# 下载单个文件
+sftp.get('/remote/path/file.txt', './local_file.txt')
+
+# 先确保远程目录存在
+sftp.mkdir('/remote/path/')  # 如已存在会抛出异常，可捕获忽略
+
+sftp.close()
+ssh.close()
+```
+
+批量上传目录：
+
+```python
+import os, paramiko
+
+def upload_dir(sftp, local_dir, remote_dir):
+    for root, dirs, files in os.walk(local_dir):
+        rel_path = os.path.relpath(root, local_dir)
+        rem_path = remote_dir + '/' + rel_path.replace('\\', '/')
+        try:
+            sftp.mkdir(rem_path)
+        except:
+            pass
+        for f in files:
+            local_file = os.path.join(root, f)
+            rem_file = rem_path + '/' + f
+            sftp.put(local_file, rem_file)
+
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect('host', port=22, username='root', password='...')
+sftp = ssh.open_sftp()
+upload_dir(sftp, './local_dir', '/remote/dir')
+sftp.close()
+ssh.close()
+```
+
+### SFTP 上传后远程执行（替换 `upload_and_run.py --run`）
+
+```python
+import paramiko
+
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect('host', port=22, username='root', password='...')
+sftp = ssh.open_sftp()
+
+# 1. 上传文件
+sftp.put('./train.py', '/root/train.py')
+sftp.close()
+
+# 2. 执行
+stdin, stdout, stderr = ssh.exec_command('cd /root && python train.py --epochs 100')
+print(stdout.read().decode())
+ssh.close()
+```
+
+### 后台任务启动（替换 `task_mgr.py`）
+
+使用 tmux（推荐，SSH 断开后持续运行）：
+
+```python
+import paramiko
+
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect('host', port=22, username='root', password='...')
+
+# 创建新 tmux 会话并启动命令
+cmd = (
+    "tmux new-session -d -s train-v1 'cd /root/project && python train.py --epochs 100'"
+)
+ssh.exec_command(cmd)
+
+# 查看任务输出
+stdin, stdout, stderr = ssh.exec_command('tmux capture-pane -t train-v1 -p -S -50')
+print(stdout.read().decode())
+
+# 停止任务
+ssh.exec_command('tmux send-keys -t train-v1 C-c')
+ssh.exec_command('tmux kill-session -t train-v1')
+
+# 列出所有 tmux 会话
+stdin, stdout, stderr = ssh.exec_command('tmux list-sessions')
+print(stdout.read().decode())
+
+ssh.close()
+```
+
+使用 nohup（轻量级，不需要 tmux）：
+
+```python
+import paramiko
+
+ssh = paramiko.SSHClient()
+ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+ssh.connect('host', port=22, username='root', password='...')
+
+cmd = "cd /root/project && nohup python train.py --epochs 100 > train.log 2>&1 &"
+ssh.exec_command(cmd)
+
+# 查看日志
+stdin, stdout, stderr = ssh.exec_command('tail -20 /root/project/train.log')
+print(stdout.read().decode())
+
+ssh.close()
+```
+
+### 快速单命令封装
+
+如果需要频繁执行简单命令，可封装为辅助函数直接使用：
+
+```python
+import paramiko
+
+def ssh_run(host, port, username, password, cmd):
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(host, port=port, username=username, password=password, timeout=10)
+    stdin, stdout, stderr = ssh.exec_command(cmd)
+    out = stdout.read().decode()
+    ssh.close()
+    return out
+
+# 使用
+result = ssh_run('host', 22, 'root', 'password', 'nvidia-smi')
+print(result)
+```
