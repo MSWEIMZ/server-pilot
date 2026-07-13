@@ -26,12 +26,37 @@ def project_known_hosts_path() -> Path:
     return Path(__file__).with_name("known_hosts")
 
 
-def configure_host_key_policy(client, paramiko) -> None:
+def normalize_host_key_policy(value) -> str:
+    policy = "relaxed" if value in (None, "") else str(value).lower()
+    if policy not in {"relaxed", "accept-new", "strict"}:
+        raise ValueError("host_key_policy must be relaxed, accept-new, or strict")
+    return policy
+
+
+def _accept_new_policy(paramiko):
+    known_hosts = project_known_hosts_path()
+
+    class AcceptNewPolicy(paramiko.MissingHostKeyPolicy):
+        def missing_host_key(self, client, hostname, key):
+            known_hosts.parent.mkdir(parents=True, exist_ok=True)
+            client._host_keys.add(hostname, key.get_name(), key)
+            client._host_keys.save(str(known_hosts))
+
+    return AcceptNewPolicy()
+
+
+def configure_host_key_policy(client, paramiko, host_key_policy=None) -> None:
     client.load_system_host_keys()
     known_hosts = project_known_hosts_path()
     if known_hosts.exists():
         client.load_host_keys(str(known_hosts))
-    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    policy = normalize_host_key_policy(host_key_policy)
+    if policy == "relaxed":
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    elif policy == "accept-new":
+        client.set_missing_host_key_policy(_accept_new_policy(paramiko))
+    else:
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
 
 def _key_filename(key_file: str | None) -> str | None:
@@ -46,13 +71,13 @@ def _key_filename(key_file: str | None) -> str | None:
     return None
 
 
-def connect_ssh(host, port, username, password=None, key_file=None, timeout=15, retries=3):
-    """Connect using only known host keys; unknown keys are rejected."""
+def connect_ssh(host, port, username, password=None, key_file=None, timeout=15, retries=3, host_key_policy=None):
+    """Connect using the configured host-key policy; defaults to relaxed compatibility mode."""
     paramiko = require_paramiko()
     for attempt in range(retries):
         client = paramiko.SSHClient()
         try:
-            configure_host_key_policy(client, paramiko)
+            configure_host_key_policy(client, paramiko, host_key_policy)
             kwargs = {"hostname": host, "port": int(port), "username": username, "timeout": timeout}
             key = _key_filename(key_file)
             if key:

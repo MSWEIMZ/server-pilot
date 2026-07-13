@@ -1,6 +1,8 @@
+import threading
 import unittest
+from unittest.mock import patch
 
-from scripts.web.dashboard import dashboard_settings, parse_log_request, request_is_authorized
+from scripts.web.dashboard import _get_ssh, dashboard_settings, parse_log_request, request_is_authorized
 
 
 class DashboardSecurityTests(unittest.TestCase):
@@ -27,6 +29,18 @@ class DashboardSecurityTests(unittest.TestCase):
         self.assertEqual(parse_log_request({"pid": ["19"], "lines": ["999999"]}), (19, 1000))
         with self.assertRaises(ValueError):
             parse_log_request({"pid": ["1;id"]})
+
+    def test_dashboard_forwards_host_key_policy(self):
+        lock = threading.Lock()
+        lock.acquire()
+        state = {"lock": lock, "ssh_cache": {"ssh": None, "host": "", "time": 0}}
+        server = {"host": "example.test", "host_key_policy": "accept-new"}
+        connection = object()
+        with patch("scripts.web.dashboard._connect", return_value=connection) as connect:
+            self.assertIs(_get_ssh(state, server), connection)
+        self.assertEqual(connect.call_args.kwargs["host_key_policy"], "accept-new")
+        self.assertTrue(lock.locked())
+        lock.release()
 
 
 if __name__ == "__main__":

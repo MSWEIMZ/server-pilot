@@ -3,6 +3,7 @@ import unittest
 from scripts.security import (
     clamp_log_lines,
     configure_host_key_policy,
+    normalize_host_key_policy,
     project_known_hosts_path,
     quote_remote_path,
     validate_pid,
@@ -46,10 +47,48 @@ class SecurityPrimitiveTests(unittest.TestCase):
                 pass
 
         client = Client()
-        configure_host_key_policy(client, Paramiko)
+        configure_host_key_policy(client, Paramiko, "strict")
         self.assertTrue(client.system_loaded)
         self.assertIsInstance(client.policy, Paramiko.RejectPolicy)
         self.assertTrue(str(project_known_hosts_path()).endswith("scripts\\known_hosts"))
+
+    def test_defaults_to_relaxed_host_key_policy(self):
+        self.assertEqual(normalize_host_key_policy(None), "relaxed")
+
+    def test_configures_each_host_key_policy(self):
+        class Client:
+            def load_system_host_keys(self):
+                pass
+
+            def load_host_keys(self, path):
+                pass
+
+            def set_missing_host_key_policy(self, policy):
+                self.policy = policy
+
+        class Paramiko:
+            class AutoAddPolicy:
+                pass
+
+            class RejectPolicy:
+                pass
+
+            class MissingHostKeyPolicy:
+                pass
+
+        expected = {
+            "relaxed": "AutoAddPolicy",
+            "accept-new": "AcceptNewPolicy",
+            "strict": "RejectPolicy",
+        }
+        for mode, policy_name in expected.items():
+            client = Client()
+            configure_host_key_policy(client, Paramiko, mode)
+            self.assertEqual(type(client.policy).__name__, policy_name)
+
+    def test_rejects_unknown_host_key_policy(self):
+        with self.assertRaises(ValueError):
+            normalize_host_key_policy("unsupported")
 
 
 if __name__ == "__main__":

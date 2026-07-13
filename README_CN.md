@@ -142,7 +142,7 @@ server-pilot/
 ## 🔐 安全使用
 
 - 当前机器的唯一源码与配置目录是 `C:\Users\WEI\server-pilot`；其他工具安装目录应链接到此目录。
-- 首次连接前，请通过可信渠道核对 SSH 主机指纹，并写入 `scripts/known_hosts`；未知主机密钥会被拒绝。
+- SSH 主机密钥策略由 `host_key_policy` 控制：默认 `relaxed`（自动接受，适合个人旧有使用方式）；`accept-new` 会保存首次密钥并拒绝后续变更；`strict` 仅接受已在系统或 `scripts/known_hosts` 中登记的密钥。可在全局配置或单个服务器条目中设置。
 - 仪表盘默认仅监听 `127.0.0.1`。如确需局域网访问，必须明确指定 `--bind 0.0.0.0 --allow-remote --token "随机长令牌"`。
 - 使用 `powershell -ExecutionPolicy Bypass -File scripts\migrate_local_installations.ps1` 查看迁移计划；确认后追加 `-Apply`，脚本会先备份旧目录和配置，再创建目录联接。
 

@@ -132,7 +132,8 @@ def _get_ssh(st, srv):
             except: pass
         ssh = _connect(
             host, srv.get("port", 22), srv.get("username", "root"),
-            srv.get("password", ""), srv.get("key_file", "")
+            srv.get("password", ""), srv.get("key_file", ""),
+            host_key_policy=srv.get("host_key_policy", "")
         )
     except Exception as e:
         st["lock"].acquire()

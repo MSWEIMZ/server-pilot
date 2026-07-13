@@ -50,10 +50,10 @@ def resolve_server(cfg, name=None):
         sys.exit(1)
     return {"host": cfg.get("host", ""), "port": cfg.get("port", 22),
             "username": cfg.get("username", "root"), "password": cfg.get("password", ""),
-            "key_file": cfg.get("key_file", "")}
+            "key_file": cfg.get("key_file", ""), "host_key_policy": cfg.get("host_key_policy", "")}
 
-def _connect(host, port, user, pwd=None, key=None, retries=3):
-    return connect_ssh(host, port, user, pwd, key, retries=retries)
+def _connect(host, port, user, pwd=None, key=None, retries=3, host_key_policy=None):
+    return connect_ssh(host, port, user, pwd, key, retries=retries, host_key_policy=host_key_policy)
 
 def _cmd(ssh, cmd, t=15):
     try:
@@ -499,7 +499,7 @@ def main():
         return 1
 
     ssh = _connect(srv["host"], srv.get("port", 22), srv.get("username", "root"),
-                   srv.get("password", ""), srv.get("key_file", ""))
+                   srv.get("password", ""), srv.get("key_file", ""), host_key_policy=srv.get("host_key_policy", ""))
 
     try:
         sftp = ssh.open_sftp()

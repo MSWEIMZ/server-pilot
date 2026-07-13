@@ -21,7 +21,7 @@ def resolve_server(cfg, name=None):
         print(f"Error: Server '{name}' not found.", file=sys.stderr); sys.exit(1)
     return {"host": cfg.get("host", ""), "port": cfg.get("port", 22),
             "username": cfg.get("username", "root"), "password": cfg.get("password", ""),
-            "key_file": cfg.get("key_file", "")}
+            "key_file": cfg.get("key_file", ""), "host_key_policy": cfg.get("host_key_policy", "")}
 
 def main():
     pa = argparse.ArgumentParser(description="Upload file to server and optionally run it")
@@ -42,7 +42,7 @@ def main():
         print("Error: No host.", file=sys.stderr); return 1
 
     ssh = connect_ssh(srv["host"], srv.get("port", 22), srv.get("username", "root"),
-                      srv.get("password", ""), srv.get("key_file", ""))
+                      srv.get("password", ""), srv.get("key_file", ""), host_key_policy=srv.get("host_key_policy", ""))
 
     try:
         # Ensure remote directory exists

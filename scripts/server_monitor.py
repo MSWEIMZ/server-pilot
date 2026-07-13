@@ -27,10 +27,10 @@ def resolve_server(cfg, name=None):
         print(f"Error: Server '{name}' not found. Available: {', '.join(s.keys())}", file=sys.stderr); sys.exit(1)
     return {"host": cfg.get("host", ""), "port": cfg.get("port", 22),
             "username": cfg.get("username", "root"), "password": cfg.get("password", ""),
-            "key_file": cfg.get("key_file", "")}
+            "key_file": cfg.get("key_file", ""), "host_key_policy": cfg.get("host_key_policy", "")}
 
-def _connect(host, port, user, pwd=None, key=None, retries=3):
-    return connect_ssh(host, port, user, pwd, key, retries=retries)
+def _connect(host, port, user, pwd=None, key=None, retries=3, host_key_policy=None):
+    return connect_ssh(host, port, user, pwd, key, retries=retries, host_key_policy=host_key_policy)
 
 def _cmd(ssh, c, t=15):
     try:
@@ -177,12 +177,12 @@ def main():
         return
     srv = resolve_server(cfg, args.server)
     sc = {"host": srv.get("host", ""), "port": srv.get("port", 22), "user": srv.get("username", "root"),
-          "pwd": srv.get("password", ""), "key": srv.get("key_file", "")}
+          "pwd": srv.get("password", ""), "key": srv.get("key_file", ""), "host_key_policy": srv.get("host_key_policy", "")}
     if not sc["host"]: print("Error: No host.", file=sys.stderr); sys.exit(1)
     all_ = not (args.gpu or args.train or args.system)
 
     def run():
-        ssh = _connect(sc["host"], sc["port"], sc["user"], sc["pwd"], sc["key"])
+        ssh = _connect(sc["host"], sc["port"], sc["user"], sc["pwd"], sc["key"], host_key_policy=sc["host_key_policy"])
         try:
             g = gpu_info(ssh) if (all_ or args.gpu) else []
             t = train_procs(ssh) if (all_ or args.train or args.logs) else []

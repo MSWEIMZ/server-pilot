@@ -44,10 +44,11 @@ def resolve_server(config, server_name=None):
         "username": config.get("username", "root"),
         "password": config.get("password", ""),
         "key_file": config.get("key_file", ""),
+        "host_key_policy": config.get("host_key_policy", ""),
     }
 
-def run_command(host, port, username, password, key_file, command, timeout=30):
-    ssh = connect_ssh(host, port, username, password, key_file)
+def run_command(host, port, username, password, key_file, command, timeout=30, host_key_policy=None):
+    ssh = connect_ssh(host, port, username, password, key_file, host_key_policy=host_key_policy)
     try:
         stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout)
         out = stdout.read().decode("utf-8", errors="replace")
@@ -57,8 +58,8 @@ def run_command(host, port, username, password, key_file, command, timeout=30):
     finally:
         ssh.close()
 
-def upload_file(host, port, username, password, key_file, local_path, remote_path):
-    ssh = connect_ssh(host, port, username, password, key_file)
+def upload_file(host, port, username, password, key_file, local_path, remote_path, host_key_policy=None):
+    ssh = connect_ssh(host, port, username, password, key_file, host_key_policy=host_key_policy)
     try:
         sftp = ssh.open_sftp()
         sftp.put(local_path, remote_path)
@@ -67,8 +68,8 @@ def upload_file(host, port, username, password, key_file, local_path, remote_pat
     finally:
         ssh.close()
 
-def download_file(host, port, username, password, key_file, remote_path, local_path):
-    ssh = connect_ssh(host, port, username, password, key_file)
+def download_file(host, port, username, password, key_file, remote_path, local_path, host_key_policy=None):
+    ssh = connect_ssh(host, port, username, password, key_file, host_key_policy=host_key_policy)
     try:
         sftp = ssh.open_sftp()
         sftp.get(remote_path, local_path)
@@ -116,18 +117,19 @@ def main():
     username = args.user or srv.get("username", "root")
     password = args.password or srv.get("password", "")
     key_file = args.key_file or srv.get("key_file", "")
+    host_key_policy = srv.get("host_key_policy", "")
     if not host:
         print("Error: No host. Use --host, --server, or configure server_config.json", file=sys.stderr)
         sys.exit(1)
     try:
         if args.upload:
-            result = upload_file(host, port, username, password, key_file, args.upload[0], args.upload[1])
+            result = upload_file(host, port, username, password, key_file, args.upload[0], args.upload[1], host_key_policy)
             print(json.dumps(result, ensure_ascii=False) if args.json else result["message"])
         elif args.download:
-            result = download_file(host, port, username, password, key_file, args.download[0], args.download[1])
+            result = download_file(host, port, username, password, key_file, args.download[0], args.download[1], host_key_policy)
             print(json.dumps(result, ensure_ascii=False) if args.json else result["message"])
         elif args.command:
-            result = run_command(host, port, username, password, key_file, args.command, args.timeout)
+            result = run_command(host, port, username, password, key_file, args.command, args.timeout, host_key_policy)
             if args.json:
                 print(json.dumps(result, ensure_ascii=False))
             else:
