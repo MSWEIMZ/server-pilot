@@ -5,7 +5,8 @@ Each server is polled independently in its own background thread.
 Switching between servers in the frontend is instant since all
 servers always have fresh cached data.
 """
-import argparse, json, os, sys, time, threading, webbrowser, re
+import argparse, hmac, json, os, sys, time, threading, webbrowser, re
+from dataclasses import dataclass
 from http.server import HTTPServer, BaseHTTPRequestHandler
 try:
     from http.server import ThreadingHTTPServer
@@ -17,6 +18,7 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from server_monitor import load_config, resolve_server, _connect, _cmd, gpu_info, train_procs, parse_logs, sys_info
+from security import clamp_log_lines, quote_remote_path, validate_pid
 
 # ── Enhanced _cmd wrapper with full PATH for container environments ──
 _PATH_PREFIX = 'export TERM=dumb; export PATH="$HOME/.local/bin:$HOME/.local/share/bin:$PATH"; '
@@ -38,6 +40,39 @@ config = {}
 poll_interval = 10
 _available_servers = []
 _shutdown = threading.Event()
+
+
+@dataclass(frozen=True)
+class DashboardSettings:
+    bind: str = "127.0.0.1"
+    token: str | None = None
+
+
+def dashboard_settings(bind="127.0.0.1", allow_remote=False, token=None):
+    is_loopback = bind in {"127.0.0.1", "::1", "localhost"}
+    if not is_loopback and not allow_remote:
+        raise ValueError("non-loopback bind requires --allow-remote")
+    if not is_loopback and not token:
+        raise ValueError("non-loopback bind requires --token")
+    return DashboardSettings(bind=bind, token=token if not is_loopback else None)
+
+
+def request_is_authorized(headers, settings):
+    if not settings.token:
+        return True
+    expected = "Bearer " + settings.token
+    return hmac.compare_digest(headers.get("Authorization", ""), expected)
+
+
+def parse_log_request(query):
+    values = query.get("pid", [])
+    if not values:
+        raise ValueError("pid required")
+    line_values = query.get("lines", ["200"])
+    return validate_pid(values[0]), clamp_log_lines(line_values[0])
+
+
+dashboard_security = dashboard_settings()
 
 # ── Per-server state management ──────────────────────────────
 def _empty_cached(name=""):
@@ -216,13 +251,13 @@ def get_process_log(ssh, pid, lines=100):
     4. Search for log files matching script name
     5. Fallback to /proc/PID/fd/1 (works if stdout is piped to a file)
     """
-    pid_s = str(pid)
+    pid_s = str(validate_pid(pid))
+    lines = clamp_log_lines(lines)
     info_cmd = (
         "echo __CMDLINE__; cat /proc/" + pid_s + "/cmdline 2>/dev/null | tr '\\0' ' '; echo; "
         "echo __CWD__; readlink /proc/" + pid_s + "/cwd 2>/dev/null; "
         "echo __FD__; ls /proc/" + pid_s + "/fd/ 2>/dev/null | wc -l; "
         "echo __STATUS__; head -10 /proc/" + pid_s + "/status 2>/dev/null; "
-        "echo __ENV__; cat /proc/" + pid_s + "/environ 2>/dev/null | tr '\\0' '\\n' | grep -iE 'CUDA|PYTHON|TRAIN|MODEL|GPU|OUTPUT|LOG' | head -10; "
         "echo __IO__; cat /proc/" + pid_s + "/io 2>/dev/null; "
         "echo __FDLINKS__; ls -l /proc/" + pid_s + "/fd/ 2>/dev/null | grep -v socket | grep -v pipe | grep -v 'anon_inode' | head -20; "
         "echo __STDOUT__; readlink /proc/" + pid_s + "/fd/1 2>/dev/null; "
@@ -263,12 +298,12 @@ def get_process_log(ssh, pid, lines=100):
         return not any(path.startswith(p) for p in dev_prefixes)
 
     if _is_real_file(stdout_target):
-        content = _cmd(ssh, "tail -" + str(lines) + " '" + stdout_target + "' 2>/dev/null", t=8)
+        content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(stdout_target) + " 2>/dev/null", t=8)
         if content and content.strip():
             stdout_text = "[stdout → " + stdout_target + "]\n" + content
 
     if _is_real_file(stderr_target):
-        content = _cmd(ssh, "tail -" + str(lines) + " '" + stderr_target + "' 2>/dev/null", t=8)
+        content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(stderr_target) + " 2>/dev/null", t=8)
         if content and content.strip():
             stderr_text = "[stderr → " + stderr_target + "]\n" + content
 
@@ -315,7 +350,7 @@ def get_process_log(ssh, pid, lines=100):
             search_dirs.append(cwd)
 
         for sd in search_dirs:
-            raw = _cmd(ssh, "find " + sd + " -maxdepth 4 \\( -name '*.log' -o -name '*.txt' -o -name '*.out' \\) -mmin -300 -type f -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -15", t=8)
+            raw = _cmd(ssh, "find " + quote_remote_path(sd) + " -maxdepth 4 \\( -name '*.log' -o -name '*.txt' -o -name '*.out' \\) -mmin -300 -type f -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -15", t=8)
             if raw:
                 for lf in raw.strip().split("\n"):
                     parts = lf.split(" ", 1)
@@ -359,7 +394,7 @@ def get_process_log(ssh, pid, lines=100):
             chosen = candidates[0]
 
         if chosen:
-            content = _cmd(ssh, "tail -" + str(lines) + " '" + chosen + "' 2>/dev/null", t=8)
+            content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(chosen) + " 2>/dev/null", t=8)
             if content and content.strip():
                 stdout_text = "[Log file: " + chosen + "]\n" + content
 
@@ -375,7 +410,7 @@ def get_process_log(ssh, pid, lines=100):
                 if "->" in line:
                     target = line.split("->")[-1].strip()
                     if target.endswith((".log", ".txt", ".out")) and _is_real_file(target):
-                        content = _cmd(ssh, "tail -" + str(lines) + " '" + target + "' 2>/dev/null", t=8)
+                        content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(target) + " 2>/dev/null", t=8)
                         if content and content.strip():
                             stdout_text = "[fd → " + target + "]\n" + content
                             break
@@ -388,7 +423,6 @@ def get_process_log(ssh, pid, lines=100):
             "cwd": cwd,
             "open_files": sections.get("fd", "0"),
             "status": sections.get("status", ""),
-            "env": sections.get("env", ""),
             "io": sections.get("io", ""),
             "stdout_target": stdout_target,
             "stderr_target": stderr_target,
@@ -569,6 +603,10 @@ class H(BaseHTTPRequestHandler):
         path = parsed.path
         qs = parse_qs(parsed.query)
 
+        if path.startswith("/api/") and not request_is_authorized(self.headers, dashboard_security):
+            self.send_json({"error": "unauthorized"}, 401)
+            return
+
         if path in ("/", "/index.html"):
             hp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
             with open(hp, "r", encoding="utf-8") as f:
@@ -597,10 +635,10 @@ class H(BaseHTTPRequestHandler):
 
         elif path == "/api/log":
             srv_name = qs.get("server", [None])[0]
-            pid = qs.get("pid", [None])[0]
-            lines = int(qs.get("lines", [200])[0])
-            if not pid:
-                self.send_json({"error": "pid required"}, 400)
+            try:
+                pid, lines = parse_log_request(qs)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, 400)
                 return
             if not srv_name:
                 srv_name = _available_servers[0] if _available_servers else None
@@ -612,7 +650,7 @@ class H(BaseHTTPRequestHandler):
                 with st["lock"]:
                     srv = resolve_server(config, srv_name)
                     ssh = _get_ssh(st, srv)
-                log_data = get_process_log(ssh, int(pid), lines)
+                log_data = get_process_log(ssh, pid, lines)
                 log_data["pid"] = pid
                 self.send_json(log_data)
             except Exception as e:
@@ -650,7 +688,6 @@ class H(BaseHTTPRequestHandler):
     def send_json(self, data, code=200):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(json.dumps(data, ensure_ascii=False, default=str).encode("utf-8"))
 
@@ -665,14 +702,22 @@ def port_in_use(port):
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 def main():
-    global config, poll_interval, _available_servers
+    global config, poll_interval, _available_servers, dashboard_security
 
     pa = argparse.ArgumentParser()
     pa.add_argument("--port", type=int, default=8765)
     pa.add_argument("--server", "-s")
     pa.add_argument("--no-browser", action="store_true")
     pa.add_argument("--interval", type=int, default=10)
+    pa.add_argument("--bind", default="127.0.0.1", help="Listen address (loopback by default)")
+    pa.add_argument("--allow-remote", action="store_true", help="Allow non-loopback binding; requires --token")
+    pa.add_argument("--token", help="Bearer token required for remote API access")
     a = pa.parse_args()
+
+    try:
+        dashboard_security = dashboard_settings(a.bind, a.allow_remote, a.token)
+    except ValueError as exc:
+        pa.error(str(exc))
 
     if port_in_use(a.port):
         print(f"Dashboard already running at http://localhost:{a.port}")
@@ -713,7 +758,7 @@ def main():
     if not a.no_browser:
         threading.Timer(1.5, lambda: webbrowser.open(f"http://localhost:{a.port}")).start()
 
-    s = ThreadingHTTPServer(("0.0.0.0", a.port), H)
+    s = ThreadingHTTPServer((dashboard_security.bind, a.port), H)
     try:
         s.serve_forever()
     except KeyboardInterrupt:
