@@ -474,7 +474,7 @@ function renderGPU(gpus){
   el.innerHTML=gpus.map(function(g){
     var tc=tempCls(g.temp);
     return '<div class="gpu-card">'+
-      '<div class="gpu-header"><span class="gpu-name">GPU '+g.idx+': '+g.name+'</span><span class="gpu-badge '+tc+'">'+g.temp+'&deg;C &middot; '+tempLabel(g.temp)+'</span></div>'+
+      '<div class="gpu-header"><span class="gpu-name">GPU '+g.idx+': '+escHtml(g.name)+'</span><span class="gpu-badge '+tc+'">'+g.temp+'&deg;C &middot; '+tempLabel(g.temp)+'</span></div>'+
       '<div style="display:flex;align-items:flex-start;gap:20px;margin-bottom:12px">'+
         svgTempGauge(g.temp)+
         svgVramPie(g.mem_pct)+
@@ -515,7 +515,7 @@ function renderTraining(procs,logs,tasks){
       epochBarHtml+
       '<div class="train-stats">'+
         '<div class="ts"><span class="k">'+t("vram2")+'</span><span class="v">'+fmtBytes(p.vram)+'</span></div>'+
-        '<div class="ts"><span class="k">'+t("user")+'</span><span class="v">'+p.user+'</span></div>'+
+        '<div class="ts"><span class="k">'+t("user")+'</span><span class="v">'+escHtml(p.user)+'</span></div>'+
         stats.map(function(s){return '<div class="ts"><span class="k">'+s[0]+'</span><span class="v">'+s[1]+'</span></div>'}).join("")+
       '</div>'+
       (lg.last?'<div class="train-log">'+escHtml(lg.last)+'</div>':'')+
@@ -635,13 +635,13 @@ function renderSystem(d){
   var nets=d.network||[];
   var netHtml='<div style="font-weight:600;margin-bottom:12px">'+t("network")+'</div>';
   if(nets.length){
-    nets.forEach(function(n){netHtml+='<div class="net-row"><span class="net-iface">'+n.iface+'</span><div class="net-stats"><span class="net-stat"><span class="arrow down">&darr;</span> '+fmtBytes(Math.round(n.rx/1024))+'</span><span class="net-stat"><span class="arrow up">&uarr;</span> '+fmtBytes(Math.round(n.tx/1024))+'</span></div></div>'});
+    nets.forEach(function(n){netHtml+='<div class="net-row"><span class="net-iface">'+escHtml(n.iface)+'</span><div class="net-stats"><span class="net-stat"><span class="arrow down">&darr;</span> '+fmtBytes(Math.round(n.rx/1024))+'</span><span class="net-stat"><span class="arrow up">&uarr;</span> '+fmtBytes(Math.round(n.tx/1024))+'</span></div></div>'});
   }else{netHtml+='<div class="empty">--</div>'}
   netEl.innerHTML=netHtml;
   var procs=d.processes||[];
   var tbody=document.querySelector("#procTable tbody");
   if(procs.length){
-    tbody.innerHTML=procs.slice(0,10).map(function(p){return '<tr><td>'+p.pid+'</td><td>'+p.user+'</td><td>'+p.cpu+'</td><td>'+p.mem+'</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(p.cmd)+'</td></tr>'}).join("");
+    tbody.innerHTML=procs.slice(0,10).map(function(p){return '<tr><td>'+p.pid+'</td><td>'+escHtml(p.user)+'</td><td>'+p.cpu+'</td><td>'+p.mem+'</td><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(p.cmd)+'</td></tr>'}).join("");
   }
 }
 
@@ -746,7 +746,7 @@ function renderOverview(){
     gpus.forEach(function(g){
       var tc=tempCls(g.temp);
       gpuHtml+='<div class="gpu-card">'+
-        '<div class="gpu-header"><span class="gpu-name">GPU '+g.idx+': '+g.name+'</span><span class="gpu-badge '+tc+'">'+g.temp+'&deg;C &middot; '+tempLabel(g.temp)+'</span></div>'+
+        '<div class="gpu-header"><span class="gpu-name">GPU '+g.idx+': '+escHtml(g.name)+'</span><span class="gpu-badge '+tc+'">'+g.temp+'&deg;C &middot; '+tempLabel(g.temp)+'</span></div>'+
         '<div style="display:flex;align-items:flex-start;gap:20px;margin-bottom:12px">'+
           svgTempGauge(g.temp)+
           svgVramPie(g.mem_pct)+
@@ -786,7 +786,7 @@ function renderOverview(){
         '<div class="train-cmd">'+escHtml(p.cmd)+'</div>'+
         '<div class="train-stats">'+
           '<div class="ts"><span class="k">'+t("vram2")+'</span><span class="v">'+fmtBytes(p.vram)+'</span></div>'+
-          '<div class="ts"><span class="k">'+t("user")+'</span><span class="v">'+p.user+'</span></div>'+
+          '<div class="ts"><span class="k">'+t("user")+'</span><span class="v">'+escHtml(p.user)+'</span></div>'+
         '</div>'+
       '</div>';
     });
