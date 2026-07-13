@@ -59,11 +59,13 @@ def configure_host_key_policy(client, paramiko, host_key_policy=None) -> None:
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
 
-def _key_filename(key_file: str | None) -> str | None:
+def _key_filename(key_file: str | None, include_defaults=True) -> str | None:
     if key_file:
         path = os.path.expanduser(key_file)
         if os.path.exists(path):
             return path
+    if not include_defaults:
+        return None
     for candidate in ("~/.ssh/id_ed25519", "~/.ssh/id_ecdsa", "~/.ssh/id_rsa"):
         path = os.path.expanduser(candidate)
         if os.path.exists(path):
@@ -79,13 +81,17 @@ def connect_ssh(host, port, username, password=None, key_file=None, timeout=15, 
         try:
             configure_host_key_policy(client, paramiko, host_key_policy)
             kwargs = {"hostname": host, "port": int(port), "username": username, "timeout": timeout}
-            key = _key_filename(key_file)
+            key = _key_filename(key_file, include_defaults=False)
             if key:
                 kwargs["key_filename"] = key
             elif password:
                 kwargs["password"] = password
             else:
-                raise RuntimeError("No SSH key or password available for this server.")
+                key = _key_filename(None)
+                if key:
+                    kwargs["key_filename"] = key
+                else:
+                    raise RuntimeError("No SSH key or password available for this server.")
             client.connect(**kwargs)
             transport = client.get_transport()
             if transport:

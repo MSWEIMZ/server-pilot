@@ -1,4 +1,7 @@
 import unittest
+from unittest.mock import patch
+
+from scripts import security
 
 from scripts.security import (
     clamp_log_lines,
@@ -89,6 +92,57 @@ class SecurityPrimitiveTests(unittest.TestCase):
     def test_rejects_unknown_host_key_policy(self):
         with self.assertRaises(ValueError):
             normalize_host_key_policy("unsupported")
+
+    def test_password_auth_takes_priority_over_auto_discovered_key(self):
+        class Client:
+            def load_system_host_keys(self):
+                pass
+
+            def load_host_keys(self, path):
+                pass
+
+            def set_missing_host_key_policy(self, policy):
+                pass
+
+            def connect(self, **kwargs):
+                self.kwargs = kwargs
+
+            def get_transport(self):
+                return None
+
+            def close(self):
+                pass
+
+        class Paramiko:
+            class AutoAddPolicy:
+                pass
+
+            class RejectPolicy:
+                pass
+
+            class MissingHostKeyPolicy:
+                pass
+
+            def __init__(self):
+                self.client = Client()
+
+            def SSHClient(self):
+                return self.client
+
+        paramiko = Paramiko()
+        with patch.object(security, "require_paramiko", return_value=paramiko), \
+             patch.object(
+                 security,
+                 "_key_filename",
+                 side_effect=lambda key_file, include_defaults=True: "C:/fake/id_rsa" if include_defaults else None,
+             ):
+            security.connect_ssh(
+                "example.test", 22, "root", password="configured-password", key_file="", retries=1
+            )
+
+        self.assertIn("password", paramiko.client.kwargs)
+        self.assertEqual(paramiko.client.kwargs["password"], "configured-password")
+        self.assertNotIn("key_filename", paramiko.client.kwargs)
 
 
 if __name__ == "__main__":
