@@ -1,5 +1,6 @@
 {
   "_comment": "Server Pilot configuration. Supports single-server and multi-server modes.",
+  "_known_hosts": "Verify and add each SSH host key to scripts/known_hosts before connecting.",
   "_single_server": "For one server, use these top-level fields:",
   "host": "your-server.com",
   "port": 22,

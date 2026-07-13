@@ -16,17 +16,9 @@ Usage:
 import argparse
 import json
 import os
-import subprocess
 import sys
 
-def ensure_paramiko():
-    try:
-        import paramiko
-        return paramiko
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "paramiko", "-q"])
-        import paramiko
-        return paramiko
+from security import connect_ssh
 
 def load_config():
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_config.json")
@@ -53,43 +45,6 @@ def resolve_server(config, server_name=None):
         "password": config.get("password", ""),
         "key_file": config.get("key_file", ""),
     }
-
-def connect_ssh(host, port, username, password=None, key_file=None, timeout=15, retries=3):
-    """Create SSH connection with key or password auth, with keepalive and retry."""
-    import time as _time
-    paramiko = ensure_paramiko()
-    for attempt in range(retries):
-        try:
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            connect_kwargs = {"hostname": host, "port": int(port), "username": username, "timeout": timeout}
-            if key_file and os.path.exists(os.path.expanduser(key_file)):
-                connect_kwargs["key_filename"] = os.path.expanduser(key_file)
-            elif password:
-                connect_kwargs["password"] = password
-            else:
-                default_keys = [
-                    os.path.expanduser("~/.ssh/id_rsa"),
-                    os.path.expanduser("~/.ssh/id_ed25519"),
-                    os.path.expanduser("~/.ssh/id_ecdsa"),
-                ]
-                found_key = next((k for k in default_keys if os.path.exists(k)), None)
-                if found_key:
-                    connect_kwargs["key_filename"] = found_key
-                else:
-                    print("Error: No SSH key found and no password provided.", file=sys.stderr)
-                    print("Set key_file in server_config.json or use --key / --pass.", file=sys.stderr)
-                    sys.exit(1)
-            ssh.connect(**connect_kwargs)
-            transport = ssh.get_transport()
-            if transport:
-                transport.set_keepalive(15)
-            return ssh
-        except Exception as e:
-            if attempt < retries - 1:
-                _time.sleep(2 * (attempt + 1))
-            else:
-                raise
 
 def run_command(host, port, username, password, key_file, command, timeout=30):
     ssh = connect_ssh(host, port, username, password, key_file)

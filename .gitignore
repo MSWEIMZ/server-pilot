@@ -1,5 +1,7 @@
 # Sensitive config (contains your server password)
 scripts/server_config.json
+scripts/known_hosts
+backups/
 
 # Python
 __pycache__/

@@ -12,14 +12,9 @@ Usage:
     python server_monitor.py --list-servers      # List servers
 """
 
-import argparse, json, os, re, subprocess, sys, io, time
+import argparse, json, os, re, sys, io, time
 
-def ensure_paramiko():
-    try:
-        import paramiko; return paramiko
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "paramiko", "-q"])
-        import paramiko; return paramiko
+from security import connect_ssh
 
 def load_config():
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_config.json")
@@ -35,31 +30,7 @@ def resolve_server(cfg, name=None):
             "key_file": cfg.get("key_file", "")}
 
 def _connect(host, port, user, pwd=None, key=None, retries=3):
-    paramiko = ensure_paramiko()
-    for attempt in range(retries):
-        try:
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            kw = {"hostname": host, "port": int(port), "username": user, "timeout": 15}
-            if key and os.path.exists(os.path.expanduser(key)):
-                kw["key_filename"] = os.path.expanduser(key)
-            elif pwd:
-                kw["password"] = pwd
-            else:
-                for k in ["~/.ssh/id_rsa", "~/.ssh/id_ed25519", "~/.ssh/id_ecdsa"]:
-                    if os.path.exists(os.path.expanduser(k)): kw["key_filename"] = os.path.expanduser(k); break
-                else:
-                    print("Error: No SSH key or password.", file=sys.stderr); sys.exit(1)
-            ssh.connect(**kw)
-            transport = ssh.get_transport()
-            if transport:
-                transport.set_keepalive(15)
-            return ssh
-        except Exception as e:
-            if attempt < retries - 1:
-                time.sleep(2 * (attempt + 1))
-            else:
-                raise
+    return connect_ssh(host, port, user, pwd, key, retries=retries)
 
 def _cmd(ssh, c, t=15):
     try:

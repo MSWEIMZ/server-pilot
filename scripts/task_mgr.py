@@ -21,10 +21,11 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import io
 import time
+
+from security import connect_ssh
 
 try:
     import io
@@ -47,32 +48,7 @@ def resolve_server(cfg, name=None):
             "key_file": cfg.get("key_file", "")}
 
 def _connect(host, port, user, pwd=None, key=None, retries=3):
-    import paramiko
-    for attempt in range(retries):
-        try:
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            kw = {"hostname": host, "port": int(port), "username": user, "timeout": 15}
-            if key and os.path.exists(os.path.expanduser(key)):
-                kw["key_filename"] = os.path.expanduser(key)
-            elif pwd:
-                kw["password"] = pwd
-            else:
-                for k in ["~/.ssh/id_rsa", "~/.ssh/id_ed25519", "~/.ssh/id_ecdsa"]:
-                    if os.path.exists(os.path.expanduser(k)):
-                        kw["key_filename"] = os.path.expanduser(k); break
-                else:
-                    print("Error: No SSH key or password.", file=sys.stderr); sys.exit(1)
-            ssh.connect(**kw)
-            transport = ssh.get_transport()
-            if transport:
-                transport.set_keepalive(15)
-            return ssh
-        except Exception as e:
-            if attempt < retries - 1:
-                time.sleep(2 * (attempt + 1))
-            else:
-                raise
+    return connect_ssh(host, port, user, pwd, key, retries=retries)
 
 def _cmd(ssh, cmd, t=15):
     try:
@@ -358,12 +334,6 @@ def main():
     srv = resolve_server(cfg, args.server)
     if not srv.get("host"):
         print("Error: No host.", file=sys.stderr); return 1
-    
-    try:
-        import paramiko
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "paramiko", "-q"])
-        import paramiko
     
     ssh = _connect(srv["host"], srv.get("port", 22), srv.get("username", "root"),
                    srv.get("password", ""), srv.get("key_file", ""))

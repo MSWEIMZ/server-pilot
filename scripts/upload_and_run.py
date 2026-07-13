@@ -6,14 +6,9 @@ Usage:
     python upload_and_run.py ./local_script.py /remote/path/script.py --run
     python upload_and_run.py ./local_script.py /remote/path/script.py --run --args "--epochs 100"
 """
-import argparse, json, os, sys, subprocess
+import argparse, json, os, sys
 
-def ensure_paramiko():
-    try:
-        import paramiko; return paramiko
-    except ImportError:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "paramiko", "-q"])
-        import paramiko; return paramiko
+from security import connect_ssh, quote_remote_path
 
 def load_config():
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_config.json")
@@ -27,28 +22,6 @@ def resolve_server(cfg, name=None):
     return {"host": cfg.get("host", ""), "port": cfg.get("port", 22),
             "username": cfg.get("username", "root"), "password": cfg.get("password", ""),
             "key_file": cfg.get("key_file", "")}
-
-def connect(host, port, user, pwd=None, key=None):
-    import paramiko, time
-    for attempt in range(3):
-        try:
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            kw = {"hostname": host, "port": int(port), "username": user, "timeout": 15}
-            if key and os.path.exists(os.path.expanduser(key)):
-                kw["key_filename"] = os.path.expanduser(key)
-            elif pwd:
-                kw["password"] = pwd
-            else:
-                for k in ["~/.ssh/id_rsa", "~/.ssh/id_ed25519"]:
-                    if os.path.exists(os.path.expanduser(k)):
-                        kw["key_filename"] = os.path.expanduser(k); break
-            ssh.connect(**kw)
-            ssh.get_transport().set_keepalive(15)
-            return ssh
-        except Exception as e:
-            if attempt < 2: time.sleep(2 * (attempt + 1))
-            else: raise
 
 def main():
     pa = argparse.ArgumentParser(description="Upload file to server and optionally run it")
@@ -68,14 +41,14 @@ def main():
     if not srv.get("host"):
         print("Error: No host.", file=sys.stderr); return 1
 
-    ssh = connect(srv["host"], srv.get("port", 22), srv.get("username", "root"),
-                  srv.get("password", ""), srv.get("key_file", ""))
+    ssh = connect_ssh(srv["host"], srv.get("port", 22), srv.get("username", "root"),
+                      srv.get("password", ""), srv.get("key_file", ""))
 
     try:
         # Ensure remote directory exists
         remote_dir = os.path.dirname(a.remote)
         if remote_dir:
-            ssh.exec_command(f"mkdir -p {remote_dir}")
+            ssh.exec_command("mkdir -p " + quote_remote_path(remote_dir))
 
         # Upload via SFTP
         sftp = ssh.open_sftp()
@@ -84,7 +57,7 @@ def main():
         print(f"Uploaded: {a.local} -> {a.remote}")
 
         if a.run:
-            cmd = f"{a.python} {a.remote} {a.args}".strip()
+            cmd = f"{quote_remote_path(a.python)} {quote_remote_path(a.remote)} {a.args}".strip()
             print(f"Running: {cmd}")
             _, stdout, stderr = ssh.exec_command(cmd, timeout=0)
             # Stream output in real-time
