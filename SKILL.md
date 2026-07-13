@@ -12,7 +12,7 @@ When this skill is triggered (via /server-pilot or any server-related request):
 1. **Read config**: Read `scripts/server_config.json` to get server info
 2. **Connect and show status**: Run `chcp 65001 & python scripts/server_monitor.py`
 3. **Start dashboard**: Run `chcp 65001 & python scripts/web/dashboard.py --no-browser` in background, tell user to visit `http://localhost:8765`
-4. **If connection fails**: Ask user for new host/port/username/password, update `scripts/server_config.json`, retry
+4. **If connection fails**: Report the error and request direction; do not overwrite server configuration or bypass host-key verification.
 
 ### Config File Format (`scripts/server_config.json`)
 
@@ -48,6 +48,8 @@ This skill uses **paramiko** (Python SSH library), NOT native ssh command.
 - Passwords are read from config file automatically, no interactive input needed
 - Includes keepalive (15s) and auto-retry (3 attempts)
 - Works on Windows without sshpass or key setup
+- Before the first connection, verify the server fingerprint out of band and add it to `scripts/known_hosts`; unknown host keys are rejected.
+- Install the dependency explicitly when needed: `python -m pip install paramiko`.
 
 ## Server Status
 
@@ -126,7 +128,10 @@ python scripts/task_mgr.py stop --all                                   # Stop a
 python scripts/web/dashboard.py              # Start on port 8765 (auto-skips if already running)
 python scripts/web/dashboard.py --port 9000  # Custom port
 python scripts/web/dashboard.py --no-browser # Don't auto-open browser
+python scripts/web/dashboard.py --bind 0.0.0.0 --allow-remote --token "choose-a-long-random-token" # Explicit remote mode
 ```
+
+The dashboard listens on `127.0.0.1` by default. Remote binding requires both `--allow-remote` and a Bearer token.
 
 Features: real-time GPU gauges, training process list with epoch/loss/acc parsing, system resources, light/dark theme, CN/EN switch, process detail modal with log viewer.
 
@@ -141,4 +146,4 @@ Parses `/proc/PID/fd` for: Epoch, Loss, Accuracy, Learning rate, Step, ETA
 
 ## Paths
 
-All `scripts/` paths are relative to: `~/.qoderworkcn/skills/server-pilot/scripts/`
+All `scripts/` paths are relative to the canonical source: `C:\Users\WEI\server-pilot\scripts\`.

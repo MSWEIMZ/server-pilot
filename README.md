@@ -112,7 +112,7 @@ python scripts/ssh_exec.py --download /root/logs/train.log ./train.log
 ## 📦 Requirements
 
 - **Python** 3.8+
-- **paramiko** — auto-installed on first run
+- **paramiko** — install explicitly in the active environment: `python -m pip install paramiko`
 - **Codex** (optional) — works standalone too
 
 ## 📁 Structure
@@ -136,6 +136,13 @@ server-pilot/
         ├── dashboard.py              # Web dashboard backend
         └── dashboard.html            # Dashboard frontend (SVG gauges, i18n, themes)
 ```
+
+## 🔐 Secure use
+
+- The canonical source and configuration directory on this machine is `C:\Users\WEI\server-pilot`; tool installations should link to it.
+- Verify each SSH host fingerprint out of band and add it to `scripts/known_hosts` before connecting. Unknown host keys are rejected.
+- The dashboard listens on `127.0.0.1` by default. A LAN bind requires explicit `--bind 0.0.0.0 --allow-remote --token "long-random-token"`.
+- Run `powershell -ExecutionPolicy Bypass -File scripts\migrate_local_installations.ps1` for a dry run, then add `-Apply` to back up legacy directories/configurations and create Junctions.
 
 ## 🤝 Contributing
 

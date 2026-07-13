@@ -114,7 +114,7 @@ python scripts/ssh_exec.py --download /root/logs/train.log ./train.log
 ## 📦 依赖
 
 - **Python** 3.8+
-- **paramiko** — 首次运行自动安装
+- **paramiko** — 请在当前 Python 环境中显式安装：`python -m pip install paramiko`
 - **Codex** （可选）— 也可以独立使用
 
 ## 📁 目录结构
@@ -138,6 +138,13 @@ server-pilot/
         ├── dashboard.py              # Web 仪表盘后端
         └── dashboard.html            # 仪表盘前端（SVG 仪表、中英文、主题切换）
 ```
+
+## 🔐 安全使用
+
+- 当前机器的唯一源码与配置目录是 `C:\Users\WEI\server-pilot`；其他工具安装目录应链接到此目录。
+- 首次连接前，请通过可信渠道核对 SSH 主机指纹，并写入 `scripts/known_hosts`；未知主机密钥会被拒绝。
+- 仪表盘默认仅监听 `127.0.0.1`。如确需局域网访问，必须明确指定 `--bind 0.0.0.0 --allow-remote --token "随机长令牌"`。
+- 使用 `powershell -ExecutionPolicy Bypass -File scripts\migrate_local_installations.ps1` 查看迁移计划；确认后追加 `-Apply`，脚本会先备份旧目录和配置，再创建目录联接。
 
 ## 🤝 参与贡献
 
