@@ -24,6 +24,11 @@ class DashboardHtmlSafetyTests(unittest.TestCase):
         self.assertIn("p.worker_count", html)
         self.assertIn("Workers", html)
 
+    def test_empty_log_panel_shows_discovery_message(self):
+        html = (Path(__file__).parents[1] / "scripts" / "web" / "dashboard.html").read_text(encoding="utf-8")
+        self.assertIn("d.detail.log_message", html)
+        self.assertIn("log_path", html)
+
 
 if __name__ == "__main__":
     unittest.main()

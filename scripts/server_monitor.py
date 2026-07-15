@@ -12,9 +12,9 @@ Usage:
     python server_monitor.py --list-servers      # List servers
 """
 
-import argparse, json, os, re, sys, io, time
+import argparse, json, os, re, shlex, sys, io, time
 
-from security import connect_ssh
+from security import connect_ssh, quote_remote_path, validate_pid
 
 def load_config():
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_config.json")
@@ -77,9 +77,149 @@ def train_procs(ssh):
                         "mem": float(p[3]), "elapsed": p[4], "cmd": p[5], "vram": pv.get(p[0], 0)})
     return out
 
-def parse_logs(ssh, pid):
-    """Parse training stdout/stderr for epoch, loss, accuracy, lr, step, eta."""
-    raw = _cmd(ssh, f"tail -30 /proc/{pid}/fd/1 2>/dev/null; tail -30 /proc/{pid}/fd/2 2>/dev/null", t=5)
+def _marked_sections(raw):
+    sections = {}
+    current = None
+    lines = []
+    for line in (raw or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("__") and stripped.endswith("__"):
+            if current:
+                sections[current] = "\n".join(lines).strip()
+            current = stripped.strip("_").lower()
+            lines = []
+        elif current:
+            lines.append(line)
+    if current:
+        sections[current] = "\n".join(lines).strip()
+    return sections
+
+
+def _regular_log_target(target):
+    target = str(target or "").strip()
+    return bool(
+        target.startswith("/")
+        and not target.startswith("/dev/")
+        and not target.endswith(" (deleted)")
+    )
+
+
+def _tee_destination(command):
+    try:
+        parts = shlex.split(str(command or ""))
+    except ValueError:
+        return ""
+    if not parts or os.path.basename(parts[0]) != "tee":
+        return ""
+    options_done = False
+    for part in parts[1:]:
+        if not options_done and part == "--":
+            options_done = True
+            continue
+        if not options_done and part.startswith("-"):
+            continue
+        if _regular_log_target(part):
+            return part
+    return ""
+
+
+def resolve_log_source(stdout_target, stderr_target, pipe_peers):
+    """Resolve only direct files or same-user tee destinations, never a pipe."""
+    for target in (stdout_target, stderr_target):
+        if _regular_log_target(target):
+            return {
+                "kind": "file",
+                "path": str(target).strip(),
+                "message": "stdout/stderr is redirected to a regular file",
+            }
+
+    for line in (pipe_peers or "").splitlines():
+        command = line.split("\t", 1)[1] if "\t" in line else line
+        destination = _tee_destination(command)
+        if destination:
+            return {
+                "kind": "tee",
+                "path": destination,
+                "message": "stdout pipe is written by tee",
+            }
+
+    return {
+        "kind": "unavailable",
+        "path": "",
+        "message": "stdout/stderr is not backed by a readable log file",
+    }
+
+
+def inspect_log_source(ssh, pid):
+    """Inspect fd targets and trace a pipe only to a same-user tee process."""
+    pid_s = str(validate_pid(pid))
+    targets_raw = _cmd(
+        ssh,
+        'printf "__STDOUT__\\n"; readlink /proc/' + pid_s + '/fd/1 2>/dev/null; '
+        'printf "__STDERR__\\n"; readlink /proc/' + pid_s + '/fd/2 2>/dev/null',
+        t=5,
+    )
+    targets = _marked_sections(targets_raw)
+    stdout_target = targets.get("stdout", "")
+    stderr_target = targets.get("stderr", "")
+
+    pipe_target = ""
+    for target in (stdout_target, stderr_target):
+        match = re.fullmatch(r"pipe:\[(\d+)\]", target or "")
+        if match:
+            pipe_target = f"pipe:[{match.group(1)}]"
+            break
+
+    pipe_peers = ""
+    if pipe_target:
+        pipe_peers = _cmd(
+            ssh,
+            'printf "__PIPE_PEERS__\\n"; uid=$(id -u); target=' + quote_remote_path(pipe_target) + '; '
+            'for fd0 in /proc/[0-9]*/fd/0; do '
+            '[ "$(readlink "$fd0" 2>/dev/null)" = "$target" ] || continue; '
+            'p=${fd0#/proc/}; p=${p%%/*}; '
+            'puid=$(awk \'/^Uid:/{print $2; exit}\' "/proc/$p/status" 2>/dev/null); '
+            '[ "$puid" = "$uid" ] || continue; '
+            'cmd=$(tr \'\\0\' \' \' < "/proc/$p/cmdline" 2>/dev/null); '
+            'printf "%s\\t%s\\n" "$p" "$cmd"; done',
+            t=8,
+        )
+
+    source = resolve_log_source(stdout_target, stderr_target, pipe_peers)
+    source["stdout_target"] = stdout_target
+    source["stderr_target"] = stderr_target
+    if source["path"]:
+        exists = _cmd(
+            ssh,
+            "test -f " + quote_remote_path(source["path"]) + " && printf OK",
+            t=4,
+        )
+        if exists.strip() != "OK":
+            source.update({
+                "kind": "unavailable",
+                "path": "",
+                "message": "resolved log path is not a regular file",
+            })
+    return source
+
+
+def tail_process_log(ssh, pid, lines=30):
+    source = inspect_log_source(ssh, pid)
+    if not source.get("path"):
+        return "", source
+    lines = max(1, min(int(lines), 1000))
+    raw = _cmd(
+        ssh,
+        "tail -n " + str(lines) + " -- " + quote_remote_path(source["path"]) + " 2>/dev/null",
+        t=8,
+    )
+    if not raw:
+        source["message"] = "log file exists but is currently empty"
+    return raw or "", source
+
+
+def parse_log_text(raw):
+    """Parse training log text for epoch, loss, accuracy, lr, step, eta."""
     if not raw: return None
     info = {}
     for line in reversed(raw.split("\n")):
@@ -107,6 +247,12 @@ def parse_logs(ssh, pid):
             info['last'] = line[:150]
         if len(info) >= 5: break
     return info if info else None
+
+
+def parse_logs(ssh, pid):
+    """Parse a safe regular-file log source without ever reading a pipe fd."""
+    raw, _source = tail_process_log(ssh, pid, 30)
+    return parse_log_text(raw)
 
 def sys_info(ssh):
     return {k: _cmd(ssh, c, 5) for k, c in {

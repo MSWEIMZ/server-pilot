@@ -550,7 +550,7 @@ function highlightLog(text){
 function renderDetailTab(detail,pid){
   if(!detail)return '<div class="log-empty">'+t("logEmpty")+'</div>';
   var html='<div class="detail-grid">';
-  var fields=[['cmdline',t("cmd")],['cwd','Working Dir'],['open_files','Open Files'],['status',t("status")],['env',t("envVars")],['io','IO Stats']];
+  var fields=[['cmdline',t("cmd")],['cwd','Working Dir'],['log_source','Log Source'],['log_path','Log Path'],['log_message','Log Status'],['open_files','Open Files'],['status',t("status")],['env',t("envVars")],['io','IO Stats']];
   fields.forEach(function(pair){
     var key=pair[0],label=pair[1];
     if(detail[key]!==undefined&&detail[key]!==null){
@@ -601,7 +601,9 @@ async function fetchLogData(pid){
     if(d.stdout&&d.stdout.trim()){
       stdoutPane.innerHTML='<div class="log-area">'+highlightLog(d.stdout)+'</div>';
     }else{
-      stdoutPane.innerHTML='<div class="log-empty">'+t("logEmpty")+'</div>';
+      var emptyMessage=d.detail&&d.detail.log_message?d.detail.log_message:t("logEmpty");
+      var emptyPath=d.detail&&d.detail.log_path?'<br><span style="font-family:JetBrains Mono;font-size:11px">'+escHtml(d.detail.log_path)+'</span>':'';
+      stdoutPane.innerHTML='<div class="log-empty" style="flex-direction:column;gap:8px">'+escHtml(emptyMessage)+emptyPath+'</div>';
     }
     var stderrPane=document.getElementById('pane-stderr');
     if(d.stderr&&d.stderr.trim()){

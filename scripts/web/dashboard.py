@@ -17,7 +17,7 @@ except ImportError:
 from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from server_monitor import load_config, resolve_server, _connect, _cmd, gpu_info, train_procs, parse_logs, sys_info
+from server_monitor import load_config, resolve_server, _connect, _cmd, gpu_info, train_procs, parse_logs, sys_info, tail_process_log
 from security import clamp_log_lines, quote_remote_path, validate_pid
 
 # ── Enhanced _cmd wrapper with full PATH for container environments ──
@@ -292,8 +292,12 @@ def get_process_log(ssh, pid, lines=100):
     stdout_target = sections.get("stdout", "")
     stderr_target = sections.get("stderr", "")
 
-    # ── 1. Check if stdout/stderr redirect to real files ──
+    # ── 1. Use the shared safe resolver (regular file or same-user tee only) ──
+    safe_text, log_source = tail_process_log(ssh, pid_s, lines)
     stdout_text = ""
+    if safe_text:
+        label = "tee" if log_source.get("kind") == "tee" else "stdout"
+        stdout_text = "[" + label + " → " + log_source.get("path", "") + "]\n" + safe_text
     stderr_text = ""
 
     def _is_real_file(path):
@@ -303,12 +307,12 @@ def get_process_log(ssh, pid, lines=100):
         dev_prefixes = ("/dev/", "pipe:", "socket:", "anon_inode:")
         return not any(path.startswith(p) for p in dev_prefixes)
 
-    if _is_real_file(stdout_target):
+    if not stdout_text and _is_real_file(stdout_target):
         content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(stdout_target) + " 2>/dev/null", t=8)
         if content and content.strip():
             stdout_text = "[stdout → " + stdout_target + "]\n" + content
 
-    if _is_real_file(stderr_target):
+    if _is_real_file(stderr_target) and stderr_target != log_source.get("path"):
         content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(stderr_target) + " 2>/dev/null", t=8)
         if content and content.strip():
             stderr_text = "[stderr → " + stderr_target + "]\n" + content
@@ -343,7 +347,7 @@ def get_process_log(ssh, pid, lines=100):
             break
 
     # ── 3. Search for log files if no stdout from redirection ──
-    if not stdout_text:
+    if not stdout_text and log_source.get("kind") == "unavailable":
         candidates = []
         search_dirs = []
         if output_dir:
@@ -404,12 +408,8 @@ def get_process_log(ssh, pid, lines=100):
             if content and content.strip():
                 stdout_text = "[Log file: " + chosen + "]\n" + content
 
-    # ── 4. Fallback: try /proc/PID/fd/1 directly ──
-    if not stdout_text:
-        stdout_text = _cmd(ssh, "timeout 3 tail -" + str(lines) + " /proc/" + pid_s + "/fd/1 2>/dev/null || echo ''", t=8)
-
-    # ── 5. Check fd links for any log-like open files ──
-    if not stdout_text and not stderr_text:
+    # ── 4. Check fd links for log-like regular files only ──
+    if not stdout_text and not stderr_text and log_source.get("kind") == "unavailable":
         fdlinks = sections.get("fdlinks", "")
         if fdlinks:
             for line in fdlinks.split("\n"):
@@ -432,6 +432,9 @@ def get_process_log(ssh, pid, lines=100):
             "io": sections.get("io", ""),
             "stdout_target": stdout_target,
             "stderr_target": stderr_target,
+            "log_source": log_source.get("kind", "unavailable"),
+            "log_path": log_source.get("path", ""),
+            "log_message": log_source.get("message", ""),
         }
     }
 
