@@ -18,3 +18,7 @@ Thumbs.db
 
 # Local development worktrees
 .worktrees/
+
+# Local Dashboard runtime logs
+dashboard.log
+dashboard-error.log

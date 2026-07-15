@@ -102,6 +102,14 @@ python scripts/server_monitor.py --watch --interval 60
 
 > 💡 **Windows 用户提示：** 运行监控脚本前先执行 `chcp 65001` 避免 emoji 编码错误。
 
+### Windows 一键打开 Dashboard
+
+以后直接双击项目根目录的 `start_dashboard.bat` 即可：
+
+- Dashboard 已运行时，直接打开 `http://127.0.0.1:8765`；
+- 未运行时，自动后台启动并打开浏览器；
+- 启动日志写入 `dashboard.log` 和 `dashboard-error.log`（已加入 Git 忽略）。
+
 ## 🛠️ 远程命令
 
 ```bash
