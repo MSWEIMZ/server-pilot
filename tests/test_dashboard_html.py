@@ -16,6 +16,9 @@ class DashboardHtmlSafetyTests(unittest.TestCase):
         self.assertIn("vram_mb", html)
         self.assertIn("Container scope", html)
         self.assertIn("No tasks detected for this user", html)
+        self.assertIn("process_scope", html)
+        self.assertIn("My Processes", html)
+        self.assertIn("p.run||p.start", html)
 
 
 if __name__ == "__main__":

@@ -109,6 +109,7 @@ python scripts/server_monitor.py --watch --interval 60
 - Dashboard 已运行时，直接打开 `http://127.0.0.1:8765`；
 - 未运行时，自动后台启动并打开浏览器；
 - 启动日志写入 `dashboard.log` 和 `dashboard-error.log`（已加入 Git 忽略）。
+- 任务和进程默认只显示当前 SSH 用户；A40 容器使用系统 `ps`/`proc` 采集，不依赖 `myjobs`。
 
 ## 🛠️ 远程命令
 

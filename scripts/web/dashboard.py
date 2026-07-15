@@ -155,13 +155,17 @@ def _close_ssh(st):
 
 # ── Helpers ───────────────────────────────────────────────────
 def get_procs(ssh):
-    raw = _cmd(ssh, "ps aux --sort=-%cpu | head -11", t=5)
+    raw = _cmd(
+        ssh,
+        'ps -u "$(id -u)" --sort=-%cpu -o user,pid,%cpu,%mem,args | head -11',
+        t=5,
+    )
     out = []
     if raw:
         for l in raw.strip().split("\n")[1:]:
-            p = l.split(None, 10)
-            if len(p) >= 11:
-                out.append({"user": p[0], "pid": p[1], "cpu": p[2], "mem": p[3], "cmd": p[10][:120]})
+            p = l.split(None, 4)
+            if len(p) >= 5:
+                out.append({"user": p[0], "pid": p[1], "cpu": p[2], "mem": p[3], "cmd": p[4][:120]})
     return out
 
 def get_net(ssh):
@@ -454,6 +458,231 @@ def _percent_to_number(value):
         return 0
 
 
+def _user_matches(displayed_user, current_user):
+    """Match ps usernames, including the trailing '+' truncation marker."""
+    displayed = str(displayed_user or "").strip().casefold()
+    current = str(current_user or "").strip().casefold()
+    if not displayed or not current:
+        return False
+    if displayed.endswith("+"):
+        return current.startswith(displayed[:-1])
+    return displayed == current
+
+
+def scope_myjobs(myjobs, process_scope="self", fallback_user=None):
+    """Restrict myjobs data to the current login user unless all is explicit."""
+    if myjobs is None:
+        return None
+    result = dict(myjobs)
+    scope = "all" if str(process_scope or "").strip().lower() == "all" else "self"
+    current_user = result.get("current_user") or fallback_user
+    result["current_user"] = current_user
+    result["process_scope"] = scope
+    all_processes = list(result.get("processes", []))
+    result["total_visible_processes"] = len(all_processes)
+    if scope == "all":
+        return result
+    result["processes"] = [
+        process for process in all_processes
+        if _user_matches(process.get("user"), current_user)
+    ]
+    result["users"] = [
+        user for user in result.get("users", [])
+        if _user_matches(user.get("user"), current_user)
+    ]
+    return result
+
+
+def _format_elapsed(seconds):
+    seconds = max(0, int(seconds or 0))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    hours, remainder = divmod(seconds, 3600)
+    minutes = remainder // 60
+    return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+
+
+def _format_memory_mb(memory_mb):
+    memory_mb = max(0, int(memory_mb or 0))
+    if memory_mb >= 1024:
+        return f"{memory_mb / 1024:.1f}G"
+    return f"{memory_mb}M"
+
+
+def _task_group(command):
+    parts = str(command or "").split()
+    if not parts:
+        return "other"
+    executable = os.path.basename(parts[0]).lower()
+    if executable.startswith("python") or executable in {"torchrun", "accelerate", "deepspeed"}:
+        for part in parts[1:]:
+            if part.endswith(".py"):
+                return os.path.basename(part)
+    return os.path.basename(parts[0]) or "other"
+
+
+def _is_own_task(process):
+    command = str(process.get("cmd", ""))
+    lowered = command.casefold()
+    executable = os.path.basename(lowered.split()[0]) if lowered.split() else ""
+    if executable in {"nvitop", "nvidia-smi", "htop", "top", "watch", "ps"}:
+        return False
+    excluded = (
+        "sshd:", "sftp-server", ".vscode-server", "ps -u ", "__current_user__",
+        "multiprocessing.resource_tracker", "multiprocessing.spawn", "spawn_main",
+    )
+    if any(marker in lowered for marker in excluded):
+        return False
+    task_markers = (
+        "python", "torchrun", "accelerate", "deepspeed", "jupyter",
+        "tensorboard", "train", "finetune", "pretrain", "ray::",
+        "wandb", "mlflow",
+    )
+    if any(marker in lowered for marker in task_markers):
+        return True
+    if process.get("gpu"):
+        return True
+    return process.get("rss_mb", 0) >= 200 and process.get("elapsed_seconds", 0) >= 60
+
+
+def parse_own_tasks_output(raw):
+    """Parse native ps/proc data and keep only current-user task processes."""
+    if not raw:
+        return None
+    current_user = None
+    current_section = None
+    raw_processes = []
+    gpu_pids = set()
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("__CURRENT_USER__"):
+            current_user = stripped.partition(" ")[2].strip() or None
+            continue
+        if stripped == "__PROCESSES__":
+            current_section = "processes"
+            continue
+        if stripped == "__GPU_PIDS__":
+            current_section = "gpu_pids"
+            continue
+        if current_section == "gpu_pids":
+            if stripped.isdigit():
+                gpu_pids.add(stripped)
+            continue
+        if current_section != "processes":
+            continue
+        parts = stripped.split(None, 7)
+        if len(parts) < 8 or not parts[0].isdigit() or not parts[1].isdigit():
+            continue
+        try:
+            rss_mb = round(int(parts[5]) / 1024)
+            elapsed_seconds = int(parts[6])
+        except ValueError:
+            continue
+        raw_processes.append({
+            "pid": parts[0],
+            "ppid": parts[1],
+            "user": parts[2],
+            "cpu_number": _percent_to_number(parts[3]),
+            "mem_percent": _percent_to_number(parts[4]),
+            "rss_mb": rss_mb,
+            "elapsed_seconds": elapsed_seconds,
+            "cmd": parts[7],
+        })
+
+    if not current_user:
+        return None
+    for process in raw_processes:
+        process["gpu"] = process["pid"] in gpu_pids
+
+    candidates = [process for process in raw_processes if _is_own_task(process)]
+    by_pid = {process["pid"]: process for process in candidates}
+    tasks = []
+    for process in candidates:
+        parent = by_pid.get(process["ppid"])
+        if parent and parent.get("cmd") == process.get("cmd"):
+            continue
+        tasks.append(process)
+
+    processes = []
+    groups = {}
+    for process in tasks:
+        group = _task_group(process["cmd"])
+        cpu_number = process["cpu_number"]
+        processes.append({
+            "user": process["user"],
+            "pid": process["pid"],
+            "ppid": process["ppid"],
+            "cpu": f"{cpu_number:g}%",
+            "ram": _format_memory_mb(process["rss_mb"]),
+            "task": process["cmd"],
+            "cmd": process["cmd"],
+            "start": "",
+            "run": _format_elapsed(process["elapsed_seconds"]),
+            "gpu": process["gpu"],
+        })
+        aggregate = groups.setdefault(group, {"count": 0, "cpu": 0.0, "ram_mb": 0})
+        aggregate["count"] += 1
+        aggregate["cpu"] += float(cpu_number)
+        aggregate["ram_mb"] += process["rss_mb"]
+
+    my_tasks = []
+    for group, aggregate in sorted(groups.items(), key=lambda item: -item[1]["cpu"]):
+        cpu = aggregate["cpu"]
+        my_tasks.append({
+            "group": group,
+            "count": str(aggregate["count"]),
+            "cpu": f"{cpu:g}%",
+            "ram": _format_memory_mb(aggregate["ram_mb"]),
+        })
+
+    total_cpu = sum(float(process["cpu_number"]) for process in tasks)
+    total_ram_mb = sum(process["rss_mb"] for process in tasks)
+    users = []
+    if processes:
+        users.append({
+            "user": current_user,
+            "procs": str(len(processes)),
+            "cpu": f"{total_cpu:g}%",
+            "ram": _format_memory_mb(total_ram_mb),
+            "tasks": ", ".join(f"{task['group']}×{task['count']}" for task in my_tasks),
+        })
+
+    return {
+        "gpus": [],
+        "users": users,
+        "processes": processes,
+        "my_tasks": my_tasks,
+        "current_user": current_user,
+        "scope": "container",
+        "process_scope": "self",
+        "data_source": "ps-proc",
+        "total_visible_processes": len(raw_processes),
+        "warnings": [
+            "Processes are restricted to the current SSH user",
+            "host PID and per-process VRAM are unavailable from this container",
+        ],
+    }
+
+
+def own_tasks_info(ssh):
+    """Collect current-user tasks directly from ps and /proc, without myjobs."""
+    command = (
+        'printf "__CURRENT_USER__ %s\\n" "$(id -un)"; '
+        'echo __PROCESSES__; '
+        'ps -u "$(id -u)" -o pid=,ppid=,user=,pcpu=,pmem=,rss=,etimes=,args= --no-headers; '
+        'echo __GPU_PIDS__; '
+        'for pid in $(ps -u "$(id -u)" -o pid=); do '
+        'if find "/proc/$pid/fd" -maxdepth 1 -type l -lname "/dev/nvidia*" '
+        '-print -quit 2>/dev/null | grep -q .; then echo "$pid"; fi; '
+        'done'
+    )
+    return parse_own_tasks_output(_cmd_dash(ssh, command, t=15))
+
+
 def parse_myjobs_output(raw):
     """Parse myjobs -d output, including container scope metadata."""
     cleaned = _ANSI_RE.sub("", raw or "")
@@ -527,6 +756,11 @@ def parse_myjobs_output(raw):
 
 def training_from_myjobs(myjobs, gpu_processes=None):
     """Convert visible container processes without inventing host/GPU fields."""
+    myjobs = scope_myjobs(
+        myjobs,
+        (myjobs or {}).get("process_scope", "self"),
+        (myjobs or {}).get("current_user"),
+    )
     gpu_by_pid = {str(p.get("pid")): p for p in (gpu_processes or [])}
     training = []
     for process in (myjobs or {}).get("processes", []):
@@ -537,9 +771,9 @@ def training_from_myjobs(myjobs, gpu_processes=None):
             "container_pid": pid,
             "host_pid": None,
             "pid_scope": "container",
-            "data_source": "myjobs",
+            "data_source": (myjobs or {}).get("data_source", "myjobs"),
             "user": process.get("user", ""),
-            "cmd": process.get("task", ""),
+            "cmd": process.get("cmd") or process.get("task", ""),
             "start": process.get("start", ""),
             "run": process.get("run", ""),
             "elapsed": process.get("run") or process.get("start", ""),
@@ -547,6 +781,7 @@ def training_from_myjobs(myjobs, gpu_processes=None):
             "ram_mb": _memory_to_mb(process.get("ram")),
             "vram_mb": None,
             "vram": None,
+            "gpu": bool(process.get("gpu")),
         }
         matched_gpu = gpu_by_pid.get(str(pid))
         if matched_gpu:
@@ -608,27 +843,36 @@ def do_poll(name):
         s = sys_info(ssh)
         pr = get_procs(ssh)
         n = get_net(ssh)
-        mj = myjobs_info(ssh)
+        mj = own_tasks_info(ssh)
+        if mj is None:
+            mj = scope_myjobs(
+                myjobs_info(ssh),
+                "self",
+                srv.get("username", "root"),
+            )
 
-        # Use myjobs as the complete visible process list when available. This is
-        # authoritative for container users; nvidia-smi may return only host PIDs
-        # or a partial list. Keep RAM separate from VRAM and preserve any verified
-        # same-namespace VRAM match.
-        used_myjobs_fallback = False
-        if mj and mj.get("processes"):
-            myjobs_training = training_from_myjobs(mj, t)
-            if myjobs_training:
-                t = myjobs_training
-                used_myjobs_fallback = True
+        # Training cards are always limited to the current SSH user.  The native
+        # ps/proc collector is primary; nvidia-smi data is merged only when the
+        # PID is visible in the same namespace.
+        current_user = (mj or {}).get("current_user") or srv.get("username", "root")
+        native_training = [
+            process for process in t
+            if _user_matches(process.get("user"), current_user)
+        ]
+        user_training = training_from_myjobs(mj, native_training)
+        user_pids = {str(process.get("pid")) for process in user_training}
+        for process in native_training:
+            if str(process.get("pid")) not in user_pids:
+                user_training.append(process)
+        t = user_training
 
         # Now collect tasks and logs (after possible myjobs supplement)
-        tk = [] if used_myjobs_fallback else get_tasks(ssh, t)
+        tk = get_tasks(ssh, t)
         lg = {}
-        if not used_myjobs_fallback:
-            for p in t:
-                li = parse_logs(ssh, p["pid"])
-                if li:
-                    lg[str(p["pid"])] = li
+        for p in t:
+            li = parse_logs(ssh, p["pid"])
+            if li:
+                lg[str(p["pid"])] = li
 
         with st["lock"]:
             st["cached"] = {

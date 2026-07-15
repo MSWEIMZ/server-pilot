@@ -300,9 +300,9 @@ a{color:var(--cyan2);text-decoration:none}
     <div class="train-grid" id="trainGrid"><div class="empty" data-i18n="loading">Loading...</div></div>
   </div>
 
-  <!-- Cluster Users (myjobs) -->
+  <!-- Current-user tasks -->
   <div class="section" id="clusterSection" style="display:none">
-    <div class="section-header"><div class="section-title"><div class="icon proc">&#128101;</div><span>Cluster Users</span></div></div>
+    <div class="section-header"><div class="section-title"><div class="icon proc">&#128101;</div><span>My Tasks</span></div></div>
     <div class="sys-grid" id="clusterGrid"></div>
   </div>
 
@@ -659,11 +659,12 @@ function renderMyjobs(mj){
   if(!mj){section.style.display="none";return}
   section.style.display="";
   var html="";
+  var selfOnly=mj.process_scope!=="all";
   if(mj.scope==="container"){
-    html+='<div class="sys-card" style="grid-column:span 2;border-color:var(--orange)"><div style="font-weight:600;margin-bottom:8px;color:var(--orange2)">Container scope</div><div style="font-size:12px;color:var(--text2)">PID values are from the visible container namespace. Host PID and per-process VRAM are unavailable from this container.</div></div>';
+    html+='<div class="sys-card" style="grid-column:span 2;border-color:var(--orange)"><div style="font-weight:600;margin-bottom:8px;color:var(--orange2)">Container scope</div><div style="font-size:12px;color:var(--text2)">Only the current SSH user is shown. PID values are from the visible container namespace; host PID and per-process VRAM may be unavailable.</div></div>';
   }
   if(mj.users&&mj.users.length){
-    html+='<div class="sys-card"><div style="font-weight:600;margin-bottom:12px">Users on Cluster</div>';
+    html+='<div class="sys-card"><div style="font-weight:600;margin-bottom:12px">'+(selfOnly?'My Usage':'Users on Cluster')+'</div>';
     mj.users.forEach(function(u){
       html+='<div class="sys-row"><span class="k" style="font-weight:600;color:var(--cyan2)">'+escHtml(u.user)+'</span><span class="v">'+u.procs+' procs &middot; '+u.cpu+' &middot; '+u.ram+' &middot; <span style="color:var(--text3);font-size:11px">'+escHtml(u.tasks)+'</span></span></div>';
     });
@@ -671,10 +672,10 @@ function renderMyjobs(mj){
     html+='</div>';
   }
   if(mj.processes&&mj.processes.length){
-    html+='<div class="sys-card" style="grid-column:span 2"><div style="font-weight:600;margin-bottom:12px">All Processes</div>';
-    html+='<div style="overflow-x:auto"><table class="proc-table"><thead><tr><th>User</th><th>PID</th><th>CPU%</th><th>RAM</th><th>Task</th><th>Start</th></tr></thead><tbody>';
+    html+='<div class="sys-card" style="grid-column:span 2"><div style="font-weight:600;margin-bottom:12px">'+(selfOnly?'My Processes':'All Processes')+'</div>';
+    html+='<div style="overflow-x:auto"><table class="proc-table"><thead><tr><th>User</th><th>PID</th><th>CPU%</th><th>RAM</th><th>Task</th><th>Run</th></tr></thead><tbody>';
     mj.processes.forEach(function(p){
-      html+='<tr><td style="color:var(--cyan2)">'+escHtml(p.user)+'</td><td>'+p.pid+'</td><td>'+p.cpu+'</td><td>'+p.ram+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(p.task)+'</td><td>'+p.start+'</td></tr>';
+      html+='<tr><td style="color:var(--cyan2)">'+escHtml(p.user)+'</td><td>'+p.pid+'</td><td>'+p.cpu+'</td><td>'+p.ram+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(p.task)+'</td><td>'+(p.run||p.start)+'</td></tr>';
     });
     html+='</tbody></table></div></div>';
   }
