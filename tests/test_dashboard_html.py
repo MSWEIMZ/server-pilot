@@ -9,16 +9,15 @@ class DashboardHtmlSafetyTests(unittest.TestCase):
         self.assertIn("+escHtml(p.user)+", html)
         self.assertIn("+escHtml(n.iface)+", html)
 
-    def test_myjobs_task_section_and_container_scope_are_rendered(self):
+    def test_current_user_training_and_gpu_occupancy_are_distinct(self):
         html = (Path(__file__).parents[1] / "scripts" / "web" / "dashboard.html").read_text(encoding="utf-8")
-        self.assertIn("my_tasks", html)
         self.assertIn("pid_scope", html)
         self.assertIn("vram_mb", html)
-        self.assertIn("Container scope", html)
-        self.assertIn("No tasks detected for this user", html)
-        self.assertIn("process_scope", html)
-        self.assertIn("My Processes", html)
-        self.assertIn("p.run||p.start", html)
+        self.assertIn("gpu_occupancy", html)
+        self.assertIn("GPU Occupancy", html)
+        self.assertIn("mapping_status", html)
+        self.assertNotIn('id="clusterSection"', html)
+        self.assertNotIn("renderMyjobs(d.myjobs)", html)
 
 
 if __name__ == "__main__":

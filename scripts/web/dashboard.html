@@ -300,12 +300,6 @@ a{color:var(--cyan2);text-decoration:none}
     <div class="train-grid" id="trainGrid"><div class="empty" data-i18n="loading">Loading...</div></div>
   </div>
 
-  <!-- Current-user tasks -->
-  <div class="section" id="clusterSection" style="display:none">
-    <div class="section-header"><div class="section-title"><div class="icon proc">&#128101;</div><span>My Tasks</span></div></div>
-    <div class="sys-grid" id="clusterGrid"></div>
-  </div>
-
   <!-- System + Network -->
   <div class="section" id="sysSection">
     <div class="section-header"><div class="section-title"><div class="icon sys">&#128187;</div><span data-i18n="systemRes">System Resources</span></div></div>
@@ -320,6 +314,12 @@ a{color:var(--cyan2);text-decoration:none}
   <div class="section" id="procSection">
     <div class="section-header"><div class="section-title"><div class="icon proc">&#128200;</div><span data-i18n="topProcs">Top Processes</span></div></div>
     <div class="sys-card" style="overflow-x:auto"><table class="proc-table" id="procTable"><thead><tr><th>PID</th><th>User</th><th>CPU%</th><th>MEM%</th><th>Command</th></tr></thead><tbody><tr><td colspan="5" class="empty" data-i18n="loading">Loading...</td></tr></tbody></table></div>
+  </div>
+
+  <!-- All-user GPU occupancy (kept separate from current-user training) -->
+  <div class="section" id="gpuOccupancySection">
+    <div class="section-header"><div class="section-title"><div class="icon gpu">&#128202;</div><span data-i18n="gpuOccupancy">GPU Occupancy</span></div></div>
+    <div id="gpuOccupancyContent"><div class="empty" data-i18n="loading">Loading...</div></div>
   </div>
 </div>
 
@@ -347,8 +347,8 @@ a{color:var(--cyan2);text-decoration:none}
 
 <script>
 var i18n={
-  zh:{refresh:"\u5237\u65b0",gpuUtil:"GPU \u5229\u7528\u7387",vram:"\u663e\u5b58\u4f7f\u7528",training:"\u8bad\u7ec3\u4efb\u52a1",uptime:"\u8fd0\u884c\u65f6\u95f4",gpuStatus:"GPU \u72b6\u6001",trainingProcs:"\u8bad\u7ec3\u8fdb\u7a0b",systemRes:"\u7cfb\u7edf\u8d44\u6e90",memory:"\u5185\u5b58",disk:"\u78c1\u76d8",network:"\u7f51\u7edc",topProcs:"\u8fdb\u7a0b\u6392\u884c",loading:"\u52a0\u8f7d\u4e2d...",noGpu:"\u672a\u68c0\u6d4b\u5230 GPU",noTrain:"\u6ca1\u6709\u8bad\u7ec3\u8fdb\u7a0b",temp:"\u6e29\u5ea6",power:"\u529f\u8017",util:"\u5229\u7528\u7387",fan:"\u98ce\u6247",epoch:"\u8f6e\u6b21",loss:"\u635f\u5931",acc:"\u51c6\u786e\u7387",lr:"\u5b66\u4e60\u7387",step:"\u6b65\u6570",eta:"\u5269\u4f59\u65f6\u95f4",elapsed:"\u8fd0\u884c",cpu:"CPU",vram2:"\u663e\u5b58",user:"\u7528\u6237",cmd:"\u547d\u4ee4",procDetail:"\u8fdb\u7a0b\u8be6\u60c5",tabDetail:"\u8be6\u60c5",logEmpty:"\u6682\u65e0\u65e5\u5fd7",clickDetail:"\u70b9\u51fb\u67e5\u770b\u8be6\u60c5",overview:"\u603b\u89c8",totalGpus:"GPU \u603b\u6570",totalTrain:"\u8bad\u7ec3\u603b\u6570",servers:"\u670d\u52a1\u5668"},
-  en:{refresh:"Refresh",gpuUtil:"GPU Util",vram:"VRAM Usage",training:"Training",uptime:"Uptime",gpuStatus:"GPU Status",trainingProcs:"Training Processes",systemRes:"System Resources",memory:"Memory",disk:"Disk",network:"Network",topProcs:"Top Processes",loading:"Loading...",noGpu:"No GPU detected",noTrain:"No training processes",temp:"Temp",power:"Power",util:"Util",fan:"Fan",epoch:"Epoch",loss:"Loss",acc:"Acc",lr:"LR",step:"Step",eta:"ETA",elapsed:"Elapsed",cpu:"CPU",vram2:"VRAM",user:"User",cmd:"Command",procDetail:"Process Detail",tabDetail:"Detail",logEmpty:"No log output",clickDetail:"Click for details",overview:"Overview",totalGpus:"Total GPUs",totalTrain:"Training",servers:"Servers"}
+  zh:{refresh:"\u5237\u65b0",gpuUtil:"GPU \u5229\u7528\u7387",vram:"\u663e\u5b58\u4f7f\u7528",training:"\u8bad\u7ec3\u4efb\u52a1",uptime:"\u8fd0\u884c\u65f6\u95f4",gpuStatus:"GPU \u72b6\u6001",trainingProcs:"\u6211\u7684\u8bad\u7ec3\u8fdb\u7a0b",systemRes:"\u7cfb\u7edf\u8d44\u6e90",memory:"\u5185\u5b58",disk:"\u78c1\u76d8",network:"\u7f51\u7edc",topProcs:"\u6211\u7684\u8fdb\u7a0b\u6392\u884c",loading:"\u52a0\u8f7d\u4e2d...",noGpu:"\u672a\u68c0\u6d4b\u5230 GPU",noTrain:"\u6ca1\u6709\u8bad\u7ec3\u8fdb\u7a0b",temp:"\u6e29\u5ea6",power:"\u529f\u8017",util:"\u5229\u7528\u7387",fan:"\u98ce\u6247",epoch:"\u8f6e\u6b21",loss:"\u635f\u5931",acc:"\u51c6\u786e\u7387",lr:"\u5b66\u4e60\u7387",step:"\u6b65\u6570",eta:"\u5269\u4f59\u65f6\u95f4",elapsed:"\u8fd0\u884c",cpu:"CPU",vram2:"\u663e\u5b58",user:"\u7528\u6237",cmd:"\u547d\u4ee4",procDetail:"\u8fdb\u7a0b\u8be6\u60c5",tabDetail:"\u8be6\u60c5",logEmpty:"\u6682\u65e0\u65e5\u5fd7",clickDetail:"\u70b9\u51fb\u67e5\u770b\u8be6\u60c5",overview:"\u603b\u89c8",totalGpus:"GPU \u603b\u6570",totalTrain:"\u8bad\u7ec3\u603b\u6570",servers:"\u670d\u52a1\u5668",gpuOccupancy:"GPU \u5360\u7528\u660e\u7ec6"},
+  en:{refresh:"Refresh",gpuUtil:"GPU Util",vram:"VRAM Usage",training:"Training",uptime:"Uptime",gpuStatus:"GPU Status",trainingProcs:"My Training Processes",systemRes:"System Resources",memory:"Memory",disk:"Disk",network:"Network",topProcs:"My Top Processes",loading:"Loading...",noGpu:"No GPU detected",noTrain:"No training processes",temp:"Temp",power:"Power",util:"Util",fan:"Fan",epoch:"Epoch",loss:"Loss",acc:"Acc",lr:"LR",step:"Step",eta:"ETA",elapsed:"Elapsed",cpu:"CPU",vram2:"VRAM",user:"User",cmd:"Command",procDetail:"Process Detail",tabDetail:"Detail",logEmpty:"No log output",clickDetail:"Click for details",overview:"Overview",totalGpus:"Total GPUs",totalTrain:"Training",servers:"Servers",gpuOccupancy:"GPU Occupancy"}
 };
 var lang="zh";
 function t(k){return(i18n[lang]||i18n.zh)[k]||k}
@@ -653,42 +653,30 @@ function renderSystem(d){
   }
 }
 
-function renderMyjobs(mj){
-  var section=document.getElementById("clusterSection");
-  var grid=document.getElementById("clusterGrid");
-  if(!mj){section.style.display="none";return}
-  section.style.display="";
-  var html="";
-  var selfOnly=mj.process_scope!=="all";
-  if(mj.scope==="container"){
-    html+='<div class="sys-card" style="grid-column:span 2;border-color:var(--orange)"><div style="font-weight:600;margin-bottom:8px;color:var(--orange2)">Container scope</div><div style="font-size:12px;color:var(--text2)">Only the current SSH user is shown. PID values are from the visible container namespace; host PID and per-process VRAM may be unavailable.</div></div>';
+function renderGpuOccupancy(rows,meta){
+  var content=document.getElementById("gpuOccupancyContent");
+  rows=rows||[];
+  meta=meta||{};
+  var status=meta.mapping_status||"unavailable";
+  var mapped=status==="inferred-order";
+  var note=mapped
+    ? (lang==="zh"?"显存来自 nvidia-smi 真实数据；用户和实验由已校验的 PID 创建顺序映射。":"VRAM is exact from nvidia-smi; user and experiment are inferred from validated PID creation order.")
+    : (lang==="zh"?"显存是真实数据，但当前无法关联身份：NVIDIA 进程 "+(meta.host_process_count||0)+"，容器候选 "+(meta.container_candidate_count||0)+"。":"VRAM is exact, but identity mapping is unavailable: NVIDIA processes "+(meta.host_process_count||0)+", container candidates "+(meta.container_candidate_count||0)+".");
+  var color=mapped?"var(--green2)":"var(--orange2)";
+  var html='<div class="sys-card" style="margin-bottom:12px;border-color:'+color+'"><div style="font-size:12px;color:'+color+'">'+escHtml(note)+'</div></div>';
+  if(!rows.length){
+    content.innerHTML=html+'<div class="empty">'+(lang==="zh"?"没有 GPU 计算进程":"No GPU compute processes")+'</div>';
+    return;
   }
-  if(mj.users&&mj.users.length){
-    html+='<div class="sys-card"><div style="font-weight:600;margin-bottom:12px">'+(selfOnly?'My Usage':'Users on Cluster')+'</div>';
-    mj.users.forEach(function(u){
-      html+='<div class="sys-row"><span class="k" style="font-weight:600;color:var(--cyan2)">'+escHtml(u.user)+'</span><span class="v">'+u.procs+' procs &middot; '+u.cpu+' &middot; '+u.ram+' &middot; <span style="color:var(--text3);font-size:11px">'+escHtml(u.tasks)+'</span></span></div>';
-    });
-    if(mj.summary)html+='<div style="margin-top:10px;font-size:12px;color:var(--green2);font-weight:600">'+escHtml(mj.summary)+'</div>';
-    html+='</div>';
-  }
-  if(mj.processes&&mj.processes.length){
-    html+='<div class="sys-card" style="grid-column:span 2"><div style="font-weight:600;margin-bottom:12px">'+(selfOnly?'My Processes':'All Processes')+'</div>';
-    html+='<div style="overflow-x:auto"><table class="proc-table"><thead><tr><th>User</th><th>PID</th><th>CPU%</th><th>RAM</th><th>Task</th><th>Run</th></tr></thead><tbody>';
-    mj.processes.forEach(function(p){
-      html+='<tr><td style="color:var(--cyan2)">'+escHtml(p.user)+'</td><td>'+p.pid+'</td><td>'+p.cpu+'</td><td>'+p.ram+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(p.task)+'</td><td>'+(p.run||p.start)+'</td></tr>';
-    });
-    html+='</tbody></table></div></div>';
-  }
-  html+='<div class="sys-card" style="grid-column:span 2"><div style="font-weight:600;margin-bottom:12px">My Tasks'+(mj.current_user?' &middot; '+escHtml(mj.current_user):'')+'</div>';
-  if(mj.my_tasks&&mj.my_tasks.length){
-    mj.my_tasks.forEach(function(task){
-      html+='<div class="sys-row"><span class="k" style="font-weight:600;color:var(--purple2)">'+escHtml(task.group)+'</span><span class="v">'+escHtml(task.count)+' tasks &middot; '+escHtml(task.cpu)+' &middot; '+escHtml(task.ram)+'</span></div>';
-    });
-  }else{
-    html+='<div class="empty" style="padding:12px">No tasks detected for this user</div>';
-  }
-  html+='</div>';
-  grid.innerHTML=html||'<div class="empty">--</div>';
+  var labels=lang==="zh"?["用户","GPU","实验","显存","容器 PID","宿主 PID"]:["User","GPU","Experiment","VRAM","Container PID","Host PID"];
+  html+='<div class="sys-card" style="overflow-x:auto"><table class="proc-table"><thead><tr>'+labels.map(function(label){return "<th>"+label+"</th>"}).join("")+'</tr></thead><tbody>';
+  rows.forEach(function(row){
+    var gpu=row.gpu_index===null||row.gpu_index===undefined?"—":"GPU "+row.gpu_index;
+    var vram=row.vram_mb===null||row.vram_mb===undefined?"—":fmtBytes(row.vram_mb);
+    html+='<tr><td style="color:var(--cyan2);font-weight:600">'+escHtml(row.user||"—")+'</td><td>'+gpu+'</td><td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(row.experiment||"—")+'</td><td style="font-weight:600">'+vram+'</td><td>'+(row.container_pid||"—")+'</td><td>'+(row.host_pid||"—")+'</td></tr>';
+  });
+  html+='</tbody></table></div>';
+  content.innerHTML=html;
 }
 
 /* ===== Overview rendering ===== */
@@ -815,7 +803,7 @@ function renderOverview(){
   document.getElementById("trainGrid").innerHTML=hasAnyTraining?trainHtml:('<div class="empty">'+t("noTrain")+'</div>');
 
   // Hide sections that don't apply in overview
-  document.getElementById("clusterSection").style.display="none";
+  document.getElementById("gpuOccupancySection").style.display="none";
   document.getElementById("sysSection").style.display="none";
   document.getElementById("procSection").style.display="none";
 }
@@ -833,6 +821,7 @@ function switchView(name){
   document.getElementById("statsRow").style.display="";
   document.getElementById("gpuSection").style.display="";
   document.getElementById("trainSection").style.display="";
+  document.getElementById("gpuOccupancySection").style.display=isOverview?"none":"";
 
   if(isOverview){
     renderOverview();
@@ -848,8 +837,8 @@ function switchView(name){
       renderStats(d);
       renderGPU(d.gpus);
       renderTraining(d.training,d.logs,d.tasks);
-      renderMyjobs(d.myjobs);
       renderSystem(d);
+      renderGpuOccupancy(d.gpu_occupancy,d.gpu_occupancy_meta);
     }else{
       document.getElementById("gpuGrid").innerHTML='<div class="empty">'+t("loading")+'</div>';
       document.getElementById("trainGrid").innerHTML='<div class="empty">'+t("loading")+'</div>';

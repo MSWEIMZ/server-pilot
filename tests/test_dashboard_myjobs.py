@@ -41,6 +41,8 @@ __PROCESSES__
 1700003 1 testuse+ 0.0 0.0 6000 300 nvitop
 1700004 1 testuse+ 0.0 0.0 3000 0 ps -u 2102
 1700005 1700000 testuse+ 30.0 0.4 1048576 1700 python train_own.py --epochs 20
+1700006 1 testuse+ 0.0 0.0 1024 1700 tee /work/logs/train.log
+1700007 1 testuse+ 90.0 0.5 1048576 120 python -m unittest experiments.ch2.exp64.test_v02_training_contract
 __GPU_PIDS__
 1700000
 1700005

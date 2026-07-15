@@ -79,6 +79,7 @@ def _empty_cached(name=""):
     return {
         "gpus": [], "training": [], "logs": {}, "system": {},
         "processes": [], "network": [], "tasks": [], "myjobs": None,
+        "gpu_occupancy": [], "gpu_occupancy_meta": {},
         "error": None, "updated": 0, "server_name": name
     }
 
@@ -523,11 +524,32 @@ def _task_group(command):
     return os.path.basename(parts[0]) or "other"
 
 
+def _is_test_command(command):
+    parts = str(command or "").casefold().split()
+    if not parts:
+        return False
+    executable = os.path.basename(parts[0])
+    test_runners = {"pytest", "py.test", "unittest", "nose2", "nosetests"}
+    if executable in test_runners:
+        return True
+    if not executable.startswith("python"):
+        return False
+    for index, part in enumerate(parts[:-1]):
+        if part == "-m" and parts[index + 1].split(".", 1)[0] in test_runners:
+            return True
+    return False
+
+
 def _is_own_task(process):
     command = str(process.get("cmd", ""))
     lowered = command.casefold()
     executable = os.path.basename(lowered.split()[0]) if lowered.split() else ""
-    if executable in {"nvitop", "nvidia-smi", "htop", "top", "watch", "ps"}:
+    if _is_test_command(command):
+        return False
+    if executable in {
+        "nvitop", "nvidia-smi", "htop", "top", "watch", "ps",
+        "tee", "tail", "cat", "grep", "sed", "awk", "bash", "sh", "zsh",
+    }:
         return False
     excluded = (
         "sshd:", "sftp-server", ".vscode-server", "ps -u ", "__current_user__",
@@ -681,6 +703,160 @@ def own_tasks_info(ssh):
         'done'
     )
     return parse_own_tasks_output(_cmd_dash(ssh, command, t=15))
+
+
+def _extract_experiment(command):
+    parts = str(command or "").split()
+    for flag in ("--config", "--cfg"):
+        if flag in parts:
+            index = parts.index(flag)
+            if index + 1 < len(parts):
+                return os.path.basename(parts[index + 1])
+    for part in parts:
+        if part.lower().endswith((".yaml", ".yml", ".json")):
+            return os.path.basename(part)
+    if "-m" in parts:
+        index = parts.index("-m")
+        if index + 1 < len(parts):
+            return parts[index + 1]
+    for part in parts:
+        if part.lower().endswith(".py"):
+            return os.path.basename(part)
+    return _task_group(command)
+
+
+def _cluster_training_candidates(processes):
+    candidates = []
+    for process in processes:
+        command = str(process.get("cmd", ""))
+        lowered = command.casefold()
+        if _is_test_command(command):
+            continue
+        if process.get("rss_kb", 0) < 100_000:
+            continue
+        if not any(marker in lowered for marker in (
+            "train", "pretrain", "torchrun", "accelerate", "deepspeed",
+        )):
+            continue
+        if any(marker in lowered for marker in (
+            "watch_", "multiprocessing.resource_tracker", "multiprocessing.spawn",
+            "spawn_main",
+        )):
+            continue
+        candidates.append(process)
+
+    by_pid = {process["pid"]: process for process in candidates}
+    roots = []
+    for process in candidates:
+        parent = by_pid.get(process["ppid"])
+        if parent and parent.get("cmd") == process.get("cmd"):
+            continue
+        roots.append(process)
+    return sorted(roots, key=lambda process: process["pid"])
+
+
+def parse_gpu_occupancy_output(raw):
+    """Map exact NVML memory rows to container jobs only when counts align."""
+    section = None
+    gpu_by_uuid = {}
+    host_processes = []
+    container_processes = []
+    for line in (raw or "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped == "__GPUS__":
+            section = "gpus"
+            continue
+        if stripped == "__GPU_PROCESSES__":
+            section = "gpu_processes"
+            continue
+        if stripped == "__CONTAINER_PROCESSES__":
+            section = "container_processes"
+            continue
+
+        if section == "gpus":
+            parts = [part.strip() for part in stripped.split(",", 1)]
+            if len(parts) == 2 and parts[0].isdigit():
+                gpu_by_uuid[parts[1]] = int(parts[0])
+        elif section == "gpu_processes":
+            parts = [part.strip() for part in stripped.split(",", 3)]
+            if len(parts) < 4 or not parts[1].isdigit():
+                continue
+            try:
+                vram_mb = int(parts[3])
+            except ValueError:
+                vram_mb = None
+            host_processes.append({
+                "gpu_uuid": parts[0],
+                "gpu_index": gpu_by_uuid.get(parts[0]),
+                "host_pid": int(parts[1]),
+                "process_name": parts[2],
+                "vram_mb": vram_mb,
+            })
+        elif section == "container_processes":
+            parts = stripped.split(None, 6)
+            if len(parts) < 7 or not parts[1].isdigit() or not parts[2].isdigit():
+                continue
+            try:
+                cpu = float(parts[3])
+                rss_kb = int(parts[4])
+                elapsed_seconds = int(parts[5])
+            except ValueError:
+                continue
+            container_processes.append({
+                "user": parts[0],
+                "pid": int(parts[1]),
+                "ppid": int(parts[2]),
+                "cpu": cpu,
+                "rss_kb": rss_kb,
+                "elapsed_seconds": elapsed_seconds,
+                "cmd": parts[6],
+            })
+
+    candidates = _cluster_training_candidates(container_processes)
+    hosts_by_creation = sorted(host_processes, key=lambda process: process["host_pid"])
+    can_map = bool(hosts_by_creation) and len(hosts_by_creation) == len(candidates)
+    rows = []
+    for index, host_process in enumerate(hosts_by_creation):
+        candidate = candidates[index] if can_map else None
+        rows.append({
+            **host_process,
+            "user": candidate.get("user") if candidate else None,
+            "experiment": _extract_experiment(candidate.get("cmd")) if candidate else None,
+            "container_pid": candidate.get("pid") if candidate else None,
+            "command": candidate.get("cmd") if candidate else None,
+            "mapping_status": "inferred-order" if candidate else "unavailable",
+        })
+
+    rows.sort(key=lambda row: (
+        row["gpu_index"] if row["gpu_index"] is not None else 999,
+        -(row["vram_mb"] or 0),
+    ))
+    mapping_status = "inferred-order" if can_map else "unavailable"
+    return {
+        "rows": rows,
+        "meta": {
+            "mapping_status": mapping_status,
+            "host_process_count": len(hosts_by_creation),
+            "container_candidate_count": len(candidates),
+            "data_source": "nvidia-smi+ps",
+        },
+    }
+
+
+def gpu_occupancy_info(ssh):
+    """Collect exact GPU memory plus container-visible user/experiment data."""
+    command = (
+        'printf "__GPUS__\\n"; '
+        'nvidia-smi --query-gpu=index,uuid --format=csv,noheader,nounits 2>/dev/null; '
+        'printf "__GPU_PROCESSES__\\n"; '
+        'nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_gpu_memory '
+        '--format=csv,noheader,nounits 2>/dev/null; '
+        'printf "__CONTAINER_PROCESSES__\\n"; '
+        'ps -eo user=,pid=,ppid=,pcpu=,rss=,etimes=,args= --sort=pid'
+    )
+    return parse_gpu_occupancy_output(_cmd_dash(ssh, command, t=20))
 
 
 def parse_myjobs_output(raw):
@@ -865,6 +1041,7 @@ def do_poll(name):
             if str(process.get("pid")) not in user_pids:
                 user_training.append(process)
         t = user_training
+        occupancy = gpu_occupancy_info(ssh)
 
         # Now collect tasks and logs (after possible myjobs supplement)
         tk = get_tasks(ssh, t)
@@ -878,6 +1055,8 @@ def do_poll(name):
             st["cached"] = {
                 "gpus": g, "training": t, "logs": lg, "system": s,
                 "processes": pr, "network": n, "tasks": tk, "myjobs": mj,
+                "gpu_occupancy": occupancy["rows"],
+                "gpu_occupancy_meta": occupancy["meta"],
                 "error": None, "updated": time.time(), "server_name": name
             }
     except Exception as e:
