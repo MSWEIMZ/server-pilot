@@ -5,7 +5,7 @@ Each server is polled independently in its own background thread.
 Switching between servers in the frontend is instant since all
 servers always have fresh cached data.
 """
-import argparse, hmac, json, os, sys, time, threading, webbrowser, re
+import argparse, copy, hmac, json, os, sys, tempfile, time, threading, webbrowser, re
 from dataclasses import dataclass
 from http.server import HTTPServer, BaseHTTPRequestHandler
 try:
@@ -18,7 +18,7 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from server_monitor import load_config, resolve_server, _connect, _cmd, gpu_info, train_procs, parse_logs, sys_info, tail_process_log
-from security import clamp_log_lines, quote_remote_path, validate_pid
+from security import clamp_log_lines, normalize_host_key_policy, quote_remote_path, validate_pid
 
 # ── Enhanced _cmd wrapper with full PATH for container environments ──
 _PATH_PREFIX = 'export TERM=dumb; export PATH="$HOME/.local/bin:$HOME/.local/share/bin:$PATH"; '
@@ -40,6 +40,9 @@ config = {}
 poll_interval = 10
 _available_servers = []
 _shutdown = threading.Event()
+_config_lock = threading.Lock()
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "server_config.json")
+_SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 @dataclass(frozen=True)
@@ -73,6 +76,126 @@ def parse_log_request(query):
 
 
 dashboard_security = dashboard_settings()
+
+
+def public_server_configs(cfg):
+    """Return connection metadata without exposing credentials or key paths."""
+    defaults = (cfg or {}).get("defaults", {})
+    rows = []
+    for name, raw in (cfg or {}).get("servers", {}).items():
+        merged = {**defaults, **raw}
+        auth = "key" if merged.get("key_file") else "password" if merged.get("password") else "none"
+        rows.append({
+            "name": name,
+            "host": merged.get("host", ""),
+            "port": int(merged.get("port", 22)),
+            "username": merged.get("username", "root"),
+            "auth": auth,
+            "host_key_policy": merged.get("host_key_policy") or "relaxed",
+        })
+    return rows
+
+
+def _validated_server_name(value):
+    name = str(value or "").strip()
+    if not _SERVER_NAME_RE.fullmatch(name):
+        raise ValueError("server name must use letters, numbers, dot, underscore, or hyphen")
+    return name
+
+
+def delete_server_config(cfg, name):
+    name = _validated_server_name(name)
+    updated = copy.deepcopy(cfg or {})
+    servers = updated.get("servers")
+    if not isinstance(servers, dict) or name not in servers:
+        raise ValueError("server not found")
+    del servers[name]
+    return updated
+
+
+def add_server_config(cfg, payload):
+    if not isinstance(payload, dict):
+        raise ValueError("JSON object required")
+    name = _validated_server_name(payload.get("name"))
+    host = str(payload.get("host") or "").strip()
+    if not host or any(char.isspace() for char in host):
+        raise ValueError("host is required and cannot contain whitespace")
+    try:
+        port = int(payload.get("port", 22))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("port must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError("port must be between 1 and 65535")
+    requested_policy = str(payload.get("host_key_policy") or "relaxed").lower()
+    policy = normalize_host_key_policy("relaxed" if requested_policy == "off" else requested_policy)
+
+    updated = copy.deepcopy(cfg or {})
+    servers = updated.setdefault("servers", {})
+    if name in servers:
+        raise ValueError("server already exists")
+    entry = {
+        "host": host,
+        "port": port,
+        "username": str(payload.get("username") or "root").strip() or "root",
+        "host_key_policy": policy,
+    }
+    password = str(payload.get("password") or "")
+    key_file = str(payload.get("key_file") or "").strip()
+    if password:
+        entry["password"] = password
+    if key_file:
+        entry["key_file"] = key_file
+    servers[name] = entry
+    return updated
+
+
+def save_server_config(cfg, path=_CONFIG_PATH):
+    """Atomically replace server_config.json without leaving temporary files."""
+    target = os.fspath(path)
+    directory = os.path.dirname(os.path.abspath(target))
+    os.makedirs(directory, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=os.path.basename(target) + ".", suffix=".tmp", dir=directory, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(cfg, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def delete_configured_server(name):
+    global config, _available_servers
+    with _config_lock:
+        updated = delete_server_config(config, name)
+        _available_servers = [item for item in _available_servers if item != name]
+        save_server_config(updated)
+        config = updated
+    state = _server_states.pop(name, None)
+    if state:
+        with state["lock"]:
+            state["event"].set()
+            _close_ssh(state)
+    return public_server_configs(updated)
+
+
+def add_configured_server(payload):
+    global config, _available_servers
+    with _config_lock:
+        updated = add_server_config(config, payload)
+        name = str(payload.get("name")).strip()
+        save_server_config(updated)
+        config = updated
+        _available_servers.append(name)
+    _get_state(name)
+    threading.Thread(target=poll_server, args=(name,), daemon=True).start()
+    return public_server_configs(updated)
 
 # ── Per-server state management ──────────────────────────────
 def _empty_cached(name=""):
@@ -1118,7 +1241,7 @@ def poll_server(name):
     """Background poll loop for one server. Runs in its own thread."""
     st = _get_state(name)
     st["event"].wait(2)  # Initial staggered startup
-    while not _shutdown.is_set():
+    while not _shutdown.is_set() and name in _available_servers:
         do_poll(name)
         st["event"].wait(poll_interval)
         st["event"].clear()
@@ -1137,6 +1260,15 @@ class H(BaseHTTPRequestHandler):
 
         if path in ("/", "/index.html"):
             hp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
+            with open(hp, "r", encoding="utf-8") as f:
+                c = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(c.encode("utf-8"))
+
+        elif path in ("/manage", "/manage.html"):
+            hp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_manager.html")
             with open(hp, "r", encoding="utf-8") as f:
                 c = f.read()
             self.send_response(200)
@@ -1199,6 +1331,11 @@ class H(BaseHTTPRequestHandler):
                     })
             self.send_json({"servers": info})
 
+        elif path == "/api/server-config":
+            with _config_lock:
+                rows = public_server_configs(config)
+            self.send_json({"servers": rows})
+
         elif path == "/api/refresh":
             srv_name = qs.get("server", [None])[0]
             if srv_name and srv_name in _server_states:
@@ -1212,6 +1349,55 @@ class H(BaseHTTPRequestHandler):
         else:
             self.send_response(404)
             self.end_headers()
+
+    def _read_json_body(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("invalid Content-Length") from exc
+        if length <= 0 or length > 65536:
+            raise ValueError("JSON body must be between 1 and 65536 bytes")
+        try:
+            value = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid JSON body") from exc
+        if not isinstance(value, dict):
+            raise ValueError("JSON object required")
+        return value
+
+    def do_POST(self):
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/") and not request_is_authorized(self.headers, dashboard_security):
+            self.send_json({"error": "unauthorized"}, 401)
+            return
+        if parsed.path != "/api/server-config":
+            self.send_json({"error": "not found"}, 404)
+            return
+        try:
+            payload = self._read_json_body()
+            rows = add_configured_server(payload)
+            self.send_json({"ok": True, "servers": rows}, 201)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 400)
+        except OSError as exc:
+            self.send_json({"error": f"failed to save config: {exc}"}, 500)
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/") and not request_is_authorized(self.headers, dashboard_security):
+            self.send_json({"error": "unauthorized"}, 401)
+            return
+        if parsed.path != "/api/server-config":
+            self.send_json({"error": "not found"}, 404)
+            return
+        name = parse_qs(parsed.query).get("name", [""])[0]
+        try:
+            rows = delete_configured_server(name)
+            self.send_json({"ok": True, "servers": rows})
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, 400)
+        except OSError as exc:
+            self.send_json({"error": f"failed to save config: {exc}"}, 500)
 
     def send_json(self, data, code=200):
         self.send_response(code)

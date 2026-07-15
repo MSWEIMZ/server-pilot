@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Server Pilot · 服务器管理</title>
+<style>
+:root{color-scheme:dark;--bg:#0a0e1a;--card:#111827;--card2:#1a2234;--border:#2a3550;--text:#e8edf5;--muted:#94a3c0;--blue:#3b82f6;--red:#ef4444;--green:#10b981}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif}.wrap{max-width:1050px;margin:auto;padding:28px}.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:24px}.header h1{font-size:24px;margin:0}.back{color:#60a5fa;text-decoration:none}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}.card,.panel{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px}.name{font-size:17px;font-weight:700;margin-bottom:10px}.meta{font-size:13px;color:var(--muted);line-height:1.8;word-break:break-all}.badge{display:inline-block;background:var(--card2);border-radius:10px;padding:2px 8px;margin-left:6px;font-size:11px}.delete{margin-top:14px;border:1px solid rgba(239,68,68,.5);background:rgba(239,68,68,.12);color:#f87171;border-radius:8px;padding:8px 13px;cursor:pointer}.delete:hover{background:rgba(239,68,68,.22)}.panel{margin-top:24px}.panel h2{font-size:18px;margin:0 0 16px}.form{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.field{display:flex;flex-direction:column;gap:6px}.field label{font-size:12px;color:var(--muted)}input,select{width:100%;background:var(--card2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px 11px}.wide{grid-column:1/-1}.submit{border:0;background:var(--blue);color:white;border-radius:8px;padding:10px 18px;cursor:pointer;font-weight:600}.status{min-height:22px;margin:14px 0;color:var(--muted);font-size:13px}.status.ok{color:#34d399}.status.err{color:#f87171}.empty{color:var(--muted);padding:24px;text-align:center}@media(max-width:650px){.wrap{padding:18px}.form{grid-template-columns:1fr}.wide{grid-column:auto}}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div class="header">
+    <h1>服务器管理</h1>
+    <a class="back" href="/">← 返回 Dashboard</a>
+  </div>
+  <div id="status" class="status"></div>
+  <section id="servers" class="grid"><div class="empty">加载中…</div></section>
+
+  <section class="panel">
+    <h2>新增服务器</h2>
+    <form id="addForm" class="form" autocomplete="off">
+      <div class="field"><label for="name">名称</label><input id="name" name="name" required placeholder="gpu-server"></div>
+      <div class="field"><label for="host">主机</label><input id="host" name="host" required placeholder="example.com"></div>
+      <div class="field"><label for="port">端口</label><input id="port" name="port" type="number" min="1" max="65535" value="22" required></div>
+      <div class="field"><label for="username">用户名</label><input id="username" name="username" value="root" required></div>
+      <div class="field"><label for="password">密码（可选）</label><input id="password" name="password" type="password" autocomplete="new-password"></div>
+      <div class="field"><label for="key_file">私钥路径（可选）</label><input id="key_file" name="key_file" placeholder="C:\\Users\\...\\id_ed25519"></div>
+      <div class="field"><label for="host_key_policy">主机密钥校验</label><select id="host_key_policy" name="host_key_policy"><option value="relaxed">关闭（默认）</option><option value="accept-new">首次接受</option><option value="strict">严格校验</option></select></div>
+      <div class="field" style="justify-content:flex-end"><button class="submit" type="submit">新增服务器</button></div>
+    </form>
+  </section>
+</main>
+<script>
+const api="/api/server-config";
+const statusEl=document.getElementById("status");
+function setStatus(message,kind){statusEl.textContent=message||"";statusEl.className="status "+(kind||"")}
+async function request(url,options){
+  const response=await fetch(url,options);
+  const data=await response.json();
+  if(!response.ok)throw new Error(data.error||("HTTP "+response.status));
+  return data;
+}
+function serverCard(server){
+  const card=document.createElement("article");card.className="card";
+  const name=document.createElement("div");name.className="name";name.textContent=server.name;card.appendChild(name);
+  const meta=document.createElement("div");meta.className="meta";
+  const endpoint=document.createElement("div");endpoint.textContent=server.username+"@"+server.host+":"+server.port;meta.appendChild(endpoint);
+  const auth=document.createElement("div");auth.textContent="认证："+server.auth;
+  const policy=document.createElement("span");policy.className="badge";policy.textContent=server.host_key_policy;auth.appendChild(policy);meta.appendChild(auth);card.appendChild(meta);
+  const button=document.createElement("button");button.className="delete";button.type="button";button.textContent="删除";button.addEventListener("click",()=>removeServer(server.name));card.appendChild(button);
+  return card;
+}
+async function loadServers(){
+  try{
+    const data=await request(api);
+    const container=document.getElementById("servers");container.replaceChildren();
+    if(!data.servers.length){const empty=document.createElement("div");empty.className="empty";empty.textContent="暂无服务器";container.appendChild(empty);return}
+    data.servers.forEach(server=>container.appendChild(serverCard(server)));
+  }catch(error){setStatus(error.message,"err")}
+}
+async function removeServer(name){
+  if(!confirm("确认删除服务器 “"+name+"”？只删除本地连接配置，不会停止远端训练。"))return;
+  try{
+    await request(api+"?name="+encodeURIComponent(name),{method:"DELETE"});
+    setStatus("已删除 "+name,"ok");await loadServers();
+  }catch(error){setStatus(error.message,"err")}
+}
+document.getElementById("addForm").addEventListener("submit",async event=>{
+  event.preventDefault();setStatus("正在保存…","");
+  const form=new FormData(event.currentTarget);const payload=Object.fromEntries(form.entries());payload.port=Number(payload.port);
+  if(!payload.password)delete payload.password;if(!payload.key_file)delete payload.key_file;
+  try{
+    await request(api,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    setStatus("服务器已新增，Dashboard 将自动开始连接。","ok");event.currentTarget.reset();document.getElementById("port").value="22";document.getElementById("username").value="root";await loadServers();
+  }catch(error){setStatus(error.message,"err")}
+});
+loadServers();
+</script>
+</body>
+</html>
