@@ -15,6 +15,7 @@ class DashboardHtmlSafetyTests(unittest.TestCase):
         self.assertIn("pid_scope", html)
         self.assertIn("vram_mb", html)
         self.assertIn("Container scope", html)
+        self.assertIn("No tasks detected for this user", html)
 
 
 if __name__ == "__main__":
