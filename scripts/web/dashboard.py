@@ -432,52 +432,80 @@ def get_process_log(ssh, pid, lines=100):
 
 
 # ── myjobs integration ────────────────────────────────────────
-def myjobs_info(ssh):
-    """Run myjobs -d and parse output into structured data."""
-    raw = _cmd_dash(ssh, "myjobs -d 2>/dev/null", t=15)
-    if not raw or "not found" in raw.lower() or "no such file" in raw.lower():
-        return None
+def _memory_to_mb(value):
+    """Convert a myjobs memory value to MB without treating it as VRAM."""
+    if value is None:
+        return 0
+    match = re.match(r"^([\d.]+)\s*([KMGT]?)B?$", str(value).strip(), re.IGNORECASE)
+    if not match:
+        return 0
+    amount = float(match.group(1))
+    unit = match.group(2).upper()
+    scale = {"": 1 / (1024 * 1024), "K": 1 / 1024, "M": 1, "G": 1024, "T": 1024 * 1024}
+    return int(round(amount * scale[unit]))
 
-    result = {"gpus": [], "users": [], "processes": [], "my_tasks": [], "raw": raw}
 
+def _percent_to_number(value):
+    """Normalize myjobs CPU text for the existing numeric dashboard field."""
+    try:
+        number = float(str(value).strip().rstrip("%"))
+        return int(number) if number.is_integer() else number
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse_myjobs_output(raw):
+    """Parse myjobs -d output, including container scope metadata."""
+    cleaned = _ANSI_RE.sub("", raw or "")
+    result = {
+        "gpus": [], "users": [], "processes": [], "my_tasks": [],
+        "current_user": None, "scope": "container", "data_source": "myjobs",
+        "warnings": [
+            "PID values are from the visible container namespace",
+            "host PID and per-process VRAM are unavailable from this container",
+        ],
+    }
     current_section = None
-    for line in raw.split("\n"):
+    for line in cleaned.split("\n"):
         stripped = line.strip()
         if not stripped or stripped.startswith("=") or stripped.startswith("\u2500"):
             continue
 
-        if stripped.startswith("GPU:"):
+        user_match = re.search(r"\b(?:current\s+)?user\s*[:=]\s*([\w.+-]+)", stripped, re.IGNORECASE)
+        if user_match and not stripped.lower().startswith("user procs"):
+            result["current_user"] = user_match.group(1)
+
+        lower = stripped.lower()
+        if lower.startswith("gpu:"):
             current_section = "gpu"; continue
-        elif stripped.startswith("Users:"):
+        if lower.startswith("users:"):
             current_section = "users"; continue
-        elif stripped.startswith("Processes:"):
+        if lower.startswith("processes:"):
             current_section = "processes"; continue
-        elif stripped.startswith("My Tasks:"):
+        if lower.startswith("my tasks:"):
             current_section = "my_tasks"; continue
-        elif stripped.startswith("\u2713") or stripped.startswith("\u2717"):
+        if stripped.startswith("\u2713") or stripped.startswith("\u2717"):
             result["summary"] = stripped
             current_section = None; continue
 
         if current_section == "gpu":
-            m = re.match(r'cuda:(\d+)\s+.*?(\d+)/(\d+)M\s+(\d+)%\s+(\d+)M\s+free', stripped)
-            if m:
+            match = re.search(r"cuda:(\d+)\s+.*?(\d+)/(\d+)M\s+(\d+)%\s+(\d+)M\s+free", stripped, re.IGNORECASE)
+            if match:
                 result["gpus"].append({
-                    "idx": int(m.group(1)),
-                    "mem_used": int(m.group(2)),
-                    "mem_total": int(m.group(3)),
-                    "util": int(m.group(4)),
-                    "mem_free": int(m.group(5)),
+                    "idx": int(match.group(1)), "mem_used": int(match.group(2)),
+                    "mem_total": int(match.group(3)), "util": int(match.group(4)),
+                    "mem_free": int(match.group(5)),
                 })
         elif current_section == "users":
             parts = stripped.split(None, 4)
-            if len(parts) >= 5 and not parts[0].startswith("\u2500") and parts[0] != "User":
+            if len(parts) >= 5 and parts[0].lower() != "user" and parts[1].isdigit():
                 result["users"].append({
                     "user": parts[0], "procs": parts[1], "cpu": parts[2],
                     "ram": parts[3], "tasks": parts[4],
                 })
         elif current_section == "processes":
             parts = stripped.split(None, 6)
-            if len(parts) >= 5 and not parts[0].startswith("\u2500") and not parts[0].startswith("User"):
+            if len(parts) >= 5 and parts[0].lower() != "user" and parts[1].isdigit():
                 result["processes"].append({
                     "user": parts[0], "pid": parts[1], "cpu": parts[2],
                     "ram": parts[3], "task": parts[4],
@@ -486,13 +514,58 @@ def myjobs_info(ssh):
                 })
         elif current_section == "my_tasks":
             parts = stripped.split(None, 3)
-            if len(parts) >= 4 and not parts[0].startswith("\u2500") and parts[0] != "Group":
+            if len(parts) >= 4 and parts[0].lower() != "group" and parts[1].isdigit():
                 result["my_tasks"].append({
                     "group": parts[0], "count": parts[1],
                     "cpu": parts[2], "ram": parts[3],
                 })
 
-    return result if result["gpus"] or result["users"] or result["processes"] else None
+    if not any(result[key] for key in ("gpus", "users", "processes", "my_tasks")):
+        return None
+    return result
+
+
+def training_from_myjobs(myjobs, gpu_processes=None):
+    """Convert visible container processes without inventing host/GPU fields."""
+    gpu_by_pid = {str(p.get("pid")): p for p in (gpu_processes or [])}
+    training = []
+    for process in (myjobs or {}).get("processes", []):
+        raw_pid = process.get("pid", "")
+        pid = int(raw_pid) if str(raw_pid).isdigit() else raw_pid
+        record = {
+            "pid": pid,
+            "container_pid": pid,
+            "host_pid": None,
+            "pid_scope": "container",
+            "data_source": "myjobs",
+            "user": process.get("user", ""),
+            "cmd": process.get("task", ""),
+            "start": process.get("start", ""),
+            "run": process.get("run", ""),
+            "elapsed": process.get("run") or process.get("start", ""),
+            "cpu": _percent_to_number(process.get("cpu", "0")),
+            "ram_mb": _memory_to_mb(process.get("ram")),
+            "vram_mb": None,
+            "vram": None,
+        }
+        matched_gpu = gpu_by_pid.get(str(pid))
+        if matched_gpu:
+            record["vram_mb"] = matched_gpu.get("vram")
+            record["vram"] = matched_gpu.get("vram")
+            record["vram_source"] = "nvidia-smi"
+        training.append(record)
+    return training
+
+
+def myjobs_info(ssh):
+    """Run myjobs -d and parse output into structured data."""
+    raw = _cmd_dash(ssh, "myjobs -d 2>/dev/null", t=15)
+    if not raw or "not found" in raw.lower() or "no such file" in raw.lower():
+        return None
+    result = parse_myjobs_output(raw)
+    if result is not None:
+        result["raw"] = raw
+    return result
 
 
 # ── Poll cycle (per-server) ──────────────────────────────────
@@ -537,41 +610,25 @@ def do_poll(name):
         n = get_net(ssh)
         mj = myjobs_info(ssh)
 
-        # Supplement training from myjobs when nvidia-smi can't detect processes
-        # (common in container environments like dev-server)
-        if not t and mj and mj.get("processes"):
-            ssh_user = srv.get("username", "root")
-            my_procs = [p for p in mj["processes"]
-                        if ssh_user.startswith(p["user"].rstrip("+"))
-                        or p["user"].rstrip("+") == ssh_user[:7]]
-            if my_procs:
-                t = []
-                for p in my_procs:
-                    ram_mb = 0
-                    ram_str = p.get("ram", "0")
-                    rm = re.match(r'([\d.]+)\s*G', ram_str)
-                    if rm:
-                        ram_mb = int(float(rm.group(1)) * 1024)
-                    else:
-                        rm2 = re.match(r'(\d+)\s*M', ram_str)
-                        if rm2:
-                            ram_mb = int(rm2.group(1))
-                    t.append({
-                        "pid": p["pid"],
-                        "user": ssh_user,
-                        "cmd": p["task"],
-                        "elapsed": p.get("start", ""),
-                        "cpu": p.get("cpu", "0"),
-                        "vram": ram_mb,
-                    })
+        # Use myjobs as the complete visible process list when available. This is
+        # authoritative for container users; nvidia-smi may return only host PIDs
+        # or a partial list. Keep RAM separate from VRAM and preserve any verified
+        # same-namespace VRAM match.
+        used_myjobs_fallback = False
+        if mj and mj.get("processes"):
+            myjobs_training = training_from_myjobs(mj, t)
+            if myjobs_training:
+                t = myjobs_training
+                used_myjobs_fallback = True
 
         # Now collect tasks and logs (after possible myjobs supplement)
-        tk = get_tasks(ssh, t)
+        tk = [] if used_myjobs_fallback else get_tasks(ssh, t)
         lg = {}
-        for p in t:
-            li = parse_logs(ssh, p["pid"])
-            if li:
-                lg[str(p["pid"])] = li
+        if not used_myjobs_fallback:
+            for p in t:
+                li = parse_logs(ssh, p["pid"])
+                if li:
+                    lg[str(p["pid"])] = li
 
         with st["lock"]:
             st["cached"] = {
