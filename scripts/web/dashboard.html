@@ -436,6 +436,14 @@ function svgEpochBar(cur,tot,pct){
 }
 
 function fmtBytes(mb){return mb>=1024?(mb/1024).toFixed(1)+" GB":mb+" MB"}
+function processMemoryHtml(p){
+  var vram=p.vram_mb!==undefined?p.vram_mb:p.vram;
+  var vramText=vram===null||vram===undefined?"—":fmtBytes(vram);
+  var html='<div class="ts"><span class="k">'+t("vram2")+'</span><span class="v">'+vramText+'</span></div>';
+  if(p.ram_mb!==undefined&&p.ram_mb!==null)html+='<div class="ts"><span class="k">RAM</span><span class="v">'+fmtBytes(p.ram_mb)+'</span></div>';
+  if(p.pid_scope)html+='<div class="ts"><span class="k">PID scope</span><span class="v">'+escHtml(p.pid_scope)+'</span></div>';
+  return html;
+}
 function tempCls(s){return s>=80?"hot":s>=60?"warm":"cool"}
 function tempLabel(s){return s>=80?(lang==="zh"?"\u8fc7\u70ed":"Hot"):s>=60?(lang==="zh"?"\u504f\u9ad8":"Warm"):(lang==="zh"?"\u6b63\u5e38":"Cool")}
 function escHtml(s){if(!s)return'';var d=document.createElement('div');d.textContent=s;return d.innerHTML}
@@ -514,7 +522,7 @@ function renderTraining(procs,logs,tasks){
       '<div class="train-cmd">'+escHtml(p.cmd)+'</div>'+
       epochBarHtml+
       '<div class="train-stats">'+
-        '<div class="ts"><span class="k">'+t("vram2")+'</span><span class="v">'+fmtBytes(p.vram)+'</span></div>'+
+        processMemoryHtml(p)+
         '<div class="ts"><span class="k">'+t("user")+'</span><span class="v">'+escHtml(p.user)+'</span></div>'+
         stats.map(function(s){return '<div class="ts"><span class="k">'+s[0]+'</span><span class="v">'+s[1]+'</span></div>'}).join("")+
       '</div>'+
@@ -651,6 +659,9 @@ function renderMyjobs(mj){
   if(!mj){section.style.display="none";return}
   section.style.display="";
   var html="";
+  if(mj.scope==="container"){
+    html+='<div class="sys-card" style="grid-column:span 2;border-color:var(--orange)"><div style="font-weight:600;margin-bottom:8px;color:var(--orange2)">Container scope</div><div style="font-size:12px;color:var(--text2)">PID values are from the visible container namespace. Host PID and per-process VRAM are unavailable from this container.</div></div>';
+  }
   if(mj.users&&mj.users.length){
     html+='<div class="sys-card"><div style="font-weight:600;margin-bottom:12px">Users on Cluster</div>';
     mj.users.forEach(function(u){
@@ -666,6 +677,13 @@ function renderMyjobs(mj){
       html+='<tr><td style="color:var(--cyan2)">'+escHtml(p.user)+'</td><td>'+p.pid+'</td><td>'+p.cpu+'</td><td>'+p.ram+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(p.task)+'</td><td>'+p.start+'</td></tr>';
     });
     html+='</tbody></table></div></div>';
+  }
+  if(mj.my_tasks&&mj.my_tasks.length){
+    html+='<div class="sys-card" style="grid-column:span 2"><div style="font-weight:600;margin-bottom:12px">My Tasks'+(mj.current_user?' &middot; '+escHtml(mj.current_user):'')+'</div>';
+    mj.my_tasks.forEach(function(task){
+      html+='<div class="sys-row"><span class="k" style="font-weight:600;color:var(--purple2)">'+escHtml(task.group)+'</span><span class="v">'+escHtml(task.count)+' tasks &middot; '+escHtml(task.cpu)+' &middot; '+escHtml(task.ram)+'</span></div>';
+    });
+    html+='</div>';
   }
   grid.innerHTML=html||'<div class="empty">--</div>';
 }
@@ -785,7 +803,7 @@ function renderOverview(){
         '<div class="train-top"><span class="train-pid">PID '+p.pid+'</span><span class="train-time"><span class="dot"></span>'+p.elapsed+'</span></div>'+
         '<div class="train-cmd">'+escHtml(p.cmd)+'</div>'+
         '<div class="train-stats">'+
-          '<div class="ts"><span class="k">'+t("vram2")+'</span><span class="v">'+fmtBytes(p.vram)+'</span></div>'+
+          processMemoryHtml(p)+
           '<div class="ts"><span class="k">'+t("user")+'</span><span class="v">'+escHtml(p.user)+'</span></div>'+
         '</div>'+
       '</div>';
