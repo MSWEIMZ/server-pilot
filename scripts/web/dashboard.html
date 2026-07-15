@@ -347,8 +347,8 @@ a{color:var(--cyan2);text-decoration:none}
 
 <script>
 var i18n={
-  zh:{refresh:"\u5237\u65b0",gpuUtil:"GPU \u5229\u7528\u7387",vram:"\u663e\u5b58\u4f7f\u7528",training:"\u8bad\u7ec3\u4efb\u52a1",uptime:"\u8fd0\u884c\u65f6\u95f4",gpuStatus:"GPU \u72b6\u6001",trainingProcs:"\u6211\u7684\u8bad\u7ec3\u8fdb\u7a0b",systemRes:"\u7cfb\u7edf\u8d44\u6e90",memory:"\u5185\u5b58",disk:"\u78c1\u76d8",network:"\u7f51\u7edc",topProcs:"\u6211\u7684\u8fdb\u7a0b\u6392\u884c",loading:"\u52a0\u8f7d\u4e2d...",noGpu:"\u672a\u68c0\u6d4b\u5230 GPU",noTrain:"\u6ca1\u6709\u8bad\u7ec3\u8fdb\u7a0b",temp:"\u6e29\u5ea6",power:"\u529f\u8017",util:"\u5229\u7528\u7387",fan:"\u98ce\u6247",epoch:"\u8f6e\u6b21",loss:"\u635f\u5931",acc:"\u51c6\u786e\u7387",lr:"\u5b66\u4e60\u7387",step:"\u6b65\u6570",eta:"\u5269\u4f59\u65f6\u95f4",elapsed:"\u8fd0\u884c",cpu:"CPU",vram2:"\u663e\u5b58",user:"\u7528\u6237",cmd:"\u547d\u4ee4",procDetail:"\u8fdb\u7a0b\u8be6\u60c5",tabDetail:"\u8be6\u60c5",logEmpty:"\u6682\u65e0\u65e5\u5fd7",clickDetail:"\u70b9\u51fb\u67e5\u770b\u8be6\u60c5",overview:"\u603b\u89c8",totalGpus:"GPU \u603b\u6570",totalTrain:"\u8bad\u7ec3\u603b\u6570",servers:"\u670d\u52a1\u5668",gpuOccupancy:"GPU \u5360\u7528\u660e\u7ec6"},
-  en:{refresh:"Refresh",gpuUtil:"GPU Util",vram:"VRAM Usage",training:"Training",uptime:"Uptime",gpuStatus:"GPU Status",trainingProcs:"My Training Processes",systemRes:"System Resources",memory:"Memory",disk:"Disk",network:"Network",topProcs:"My Top Processes",loading:"Loading...",noGpu:"No GPU detected",noTrain:"No training processes",temp:"Temp",power:"Power",util:"Util",fan:"Fan",epoch:"Epoch",loss:"Loss",acc:"Acc",lr:"LR",step:"Step",eta:"ETA",elapsed:"Elapsed",cpu:"CPU",vram2:"VRAM",user:"User",cmd:"Command",procDetail:"Process Detail",tabDetail:"Detail",logEmpty:"No log output",clickDetail:"Click for details",overview:"Overview",totalGpus:"Total GPUs",totalTrain:"Training",servers:"Servers",gpuOccupancy:"GPU Occupancy"}
+  zh:{refresh:"\u5237\u65b0",gpuUtil:"GPU \u5229\u7528\u7387",vram:"\u663e\u5b58\u4f7f\u7528",training:"\u8bad\u7ec3\u4efb\u52a1",uptime:"\u8fd0\u884c\u65f6\u95f4",gpuStatus:"GPU \u72b6\u6001",trainingProcs:"\u6211\u7684\u8bad\u7ec3\u8fdb\u7a0b",systemRes:"\u7cfb\u7edf\u8d44\u6e90",memory:"\u5185\u5b58",disk:"\u78c1\u76d8",network:"\u7f51\u7edc",topProcs:"\u6211\u7684\u8fdb\u7a0b\u6392\u884c",loading:"\u52a0\u8f7d\u4e2d...",noGpu:"\u672a\u68c0\u6d4b\u5230 GPU",noTrain:"\u6ca1\u6709\u8bad\u7ec3\u8fdb\u7a0b",temp:"\u6e29\u5ea6",power:"\u529f\u8017",util:"\u5229\u7528\u7387",fan:"\u98ce\u6247",epoch:"\u8f6e\u6b21",loss:"\u635f\u5931",acc:"\u51c6\u786e\u7387",lr:"\u5b66\u4e60\u7387",step:"\u6b65\u6570",eta:"\u5269\u4f59\u65f6\u95f4",elapsed:"\u8fd0\u884c",cpu:"CPU",vram2:"\u663e\u5b58",user:"\u7528\u6237",workers:"Worker",cmd:"\u547d\u4ee4",procDetail:"\u8fdb\u7a0b\u8be6\u60c5",tabDetail:"\u8be6\u60c5",logEmpty:"\u6682\u65e0\u65e5\u5fd7",clickDetail:"\u70b9\u51fb\u67e5\u770b\u8be6\u60c5",overview:"\u603b\u89c8",totalGpus:"GPU \u603b\u6570",totalTrain:"\u8bad\u7ec3\u603b\u6570",servers:"\u670d\u52a1\u5668",gpuOccupancy:"GPU \u5360\u7528\u660e\u7ec6"},
+  en:{refresh:"Refresh",gpuUtil:"GPU Util",vram:"VRAM Usage",training:"Training",uptime:"Uptime",gpuStatus:"GPU Status",trainingProcs:"My Training Processes",systemRes:"System Resources",memory:"Memory",disk:"Disk",network:"Network",topProcs:"My Top Processes",loading:"Loading...",noGpu:"No GPU detected",noTrain:"No training processes",temp:"Temp",power:"Power",util:"Util",fan:"Fan",epoch:"Epoch",loss:"Loss",acc:"Acc",lr:"LR",step:"Step",eta:"ETA",elapsed:"Elapsed",cpu:"CPU",vram2:"VRAM",user:"User",workers:"Workers",cmd:"Command",procDetail:"Process Detail",tabDetail:"Detail",logEmpty:"No log output",clickDetail:"Click for details",overview:"Overview",totalGpus:"Total GPUs",totalTrain:"Training",servers:"Servers",gpuOccupancy:"GPU Occupancy"}
 };
 var lang="zh";
 function t(k){return(i18n[lang]||i18n.zh)[k]||k}
@@ -516,6 +516,7 @@ function renderTraining(procs,logs,tasks){
     var descHtml=tk&&tk.description?'<div class="train-desc">'+escHtml(tk.description)+'</div>':'';
     var ep=parseEpochProgress(logs,p.pid);
     var epochBarHtml=ep?svgEpochBar(ep.current,ep.total,ep.pct):'';
+    var workerHtml=p.worker_count?'<div class="ts"><span class="k">'+t("workers")+'</span><span class="v">'+p.worker_count+'</span></div>':'';
     return '<div class="train-card" onclick="openModal('+p.pid+')">'+
       descHtml+
       '<div class="train-top"><span class="train-pid">PID '+p.pid+'</span><span class="train-time"><span class="dot"></span>'+p.elapsed+' &middot; '+t("cpu")+': '+p.cpu+'%</span></div>'+
@@ -523,6 +524,7 @@ function renderTraining(procs,logs,tasks){
       epochBarHtml+
       '<div class="train-stats">'+
         processMemoryHtml(p)+
+        workerHtml+
         '<div class="ts"><span class="k">'+t("user")+'</span><span class="v">'+escHtml(p.user)+'</span></div>'+
         stats.map(function(s){return '<div class="ts"><span class="k">'+s[0]+'</span><span class="v">'+s[1]+'</span></div>'}).join("")+
       '</div>'+
@@ -789,12 +791,14 @@ function renderOverview(){
       var lg=(d.logs&&d.logs[p.pid])||{};
       var tk=taskMap[p.pid]||null;
       var descHtml=tk&&tk.description?'<div class="train-desc">'+escHtml(tk.description)+'</div>':'';
+      var workerHtml=p.worker_count?'<div class="ts"><span class="k">'+t("workers")+'</span><span class="v">'+p.worker_count+'</span></div>':'';
       trainHtml+='<div class="train-card" onclick="openModal('+p.pid+')">'+
         descHtml+
         '<div class="train-top"><span class="train-pid">PID '+p.pid+'</span><span class="train-time"><span class="dot"></span>'+p.elapsed+'</span></div>'+
         '<div class="train-cmd">'+escHtml(p.cmd)+'</div>'+
         '<div class="train-stats">'+
           processMemoryHtml(p)+
+          workerHtml+
           '<div class="ts"><span class="k">'+t("user")+'</span><span class="v">'+escHtml(p.user)+'</span></div>'+
         '</div>'+
       '</div>';

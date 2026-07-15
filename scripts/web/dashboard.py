@@ -620,14 +620,56 @@ def parse_own_tasks_output(raw):
     for process in raw_processes:
         process["gpu"] = process["pid"] in gpu_pids
 
+    raw_by_pid = {process["pid"]: process for process in raw_processes}
     candidates = [process for process in raw_processes if _is_own_task(process)]
-    by_pid = {process["pid"]: process for process in candidates}
-    tasks = []
+
+    def _has_test_ancestor(process):
+        seen = set()
+        parent_pid = process.get("ppid")
+        while parent_pid and parent_pid not in seen:
+            seen.add(parent_pid)
+            parent = raw_by_pid.get(parent_pid)
+            if not parent:
+                break
+            if _is_test_command(parent.get("cmd")):
+                return True
+            parent_pid = parent.get("ppid")
+        return False
+
+    candidates = [process for process in candidates if not _has_test_ancestor(process)]
+    candidate_by_pid = {process["pid"]: process for process in candidates}
+
+    def _task_root(process):
+        root = process
+        seen = set()
+        parent_pid = process.get("ppid")
+        while parent_pid and parent_pid not in seen:
+            seen.add(parent_pid)
+            parent = raw_by_pid.get(parent_pid)
+            if not parent:
+                break
+            if parent_pid in candidate_by_pid:
+                root = parent
+            parent_pid = parent.get("ppid")
+        return root
+
+    members_by_root = {}
+    roots = []
     for process in candidates:
-        parent = by_pid.get(process["ppid"])
-        if parent and parent.get("cmd") == process.get("cmd"):
-            continue
-        tasks.append(process)
+        root = _task_root(process)
+        members_by_root.setdefault(root["pid"], []).append(process)
+        if root["pid"] == process["pid"]:
+            roots.append(root)
+
+    tasks = []
+    for root in roots:
+        members = members_by_root[root["pid"]]
+        aggregate = dict(root)
+        aggregate["cpu_number"] = sum(member["cpu_number"] for member in members)
+        aggregate["rss_mb"] = sum(member["rss_mb"] for member in members)
+        aggregate["gpu"] = any(member["gpu"] for member in members)
+        aggregate["worker_count"] = max(0, len(members) - 1)
+        tasks.append(aggregate)
 
     processes = []
     groups = {}
@@ -645,6 +687,7 @@ def parse_own_tasks_output(raw):
             "start": "",
             "run": _format_elapsed(process["elapsed_seconds"]),
             "gpu": process["gpu"],
+            "worker_count": process.get("worker_count", 0),
         })
         aggregate = groups.setdefault(group, {"count": 0, "cpu": 0.0, "ram_mb": 0})
         aggregate["count"] += 1
@@ -958,6 +1001,7 @@ def training_from_myjobs(myjobs, gpu_processes=None):
             "vram_mb": None,
             "vram": None,
             "gpu": bool(process.get("gpu")),
+            "worker_count": int(process.get("worker_count", 0) or 0),
         }
         matched_gpu = gpu_by_pid.get(str(pid))
         if matched_gpu:

@@ -19,6 +19,11 @@ class DashboardHtmlSafetyTests(unittest.TestCase):
         self.assertNotIn('id="clusterSection"', html)
         self.assertNotIn("renderMyjobs(d.myjobs)", html)
 
+    def test_training_card_shows_collapsed_worker_count(self):
+        html = (Path(__file__).parents[1] / "scripts" / "web" / "dashboard.html").read_text(encoding="utf-8")
+        self.assertIn("p.worker_count", html)
+        self.assertIn("Workers", html)
+
 
 if __name__ == "__main__":
     unittest.main()

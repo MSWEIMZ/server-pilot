@@ -48,6 +48,13 @@ __GPU_PIDS__
 1700005
 """
 
+WORKER_TREE_SAMPLE = OWN_PS_SAMPLE.replace(
+    "__GPU_PIDS__",
+    """1700008 1700000 testuse+ 21.0 0.4 1153024 110 python
+1700009 1700007 testuse+ 18.0 0.4 963584 100 python
+__GPU_PIDS__""",
+)
+
 
 class DashboardMyjobsTests(unittest.TestCase):
     def test_top_processes_query_is_limited_to_current_uid(self):
@@ -101,6 +108,16 @@ class DashboardMyjobsTests(unittest.TestCase):
         self.assertEqual([p["pid"] for p in info["processes"]], ["1700000", "1700001"])
         self.assertTrue(info["processes"][0]["gpu"])
         self.assertEqual(len(training_from_myjobs(info)), 2)
+
+    def test_native_collector_collapses_worker_tree(self):
+        info = parse_own_tasks_output(WORKER_TREE_SAMPLE)
+
+        self.assertEqual([p["pid"] for p in info["processes"]], ["1700000", "1700001"])
+        root = info["processes"][0]
+        self.assertEqual(root["worker_count"], 2)
+        self.assertEqual(root["cpu"], "121%")
+        self.assertEqual(root["ram"], "3.1G")
+        self.assertTrue(root["gpu"])
 
     def test_verified_same_namespace_vram_is_preserved(self):
         parsed = parse_myjobs_output(MYJOBS_SAMPLE)
