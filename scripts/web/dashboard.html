@@ -678,13 +678,15 @@ function renderMyjobs(mj){
     });
     html+='</tbody></table></div></div>';
   }
+  html+='<div class="sys-card" style="grid-column:span 2"><div style="font-weight:600;margin-bottom:12px">My Tasks'+(mj.current_user?' &middot; '+escHtml(mj.current_user):'')+'</div>';
   if(mj.my_tasks&&mj.my_tasks.length){
-    html+='<div class="sys-card" style="grid-column:span 2"><div style="font-weight:600;margin-bottom:12px">My Tasks'+(mj.current_user?' &middot; '+escHtml(mj.current_user):'')+'</div>';
     mj.my_tasks.forEach(function(task){
       html+='<div class="sys-row"><span class="k" style="font-weight:600;color:var(--purple2)">'+escHtml(task.group)+'</span><span class="v">'+escHtml(task.count)+' tasks &middot; '+escHtml(task.cpu)+' &middot; '+escHtml(task.ram)+'</span></div>';
     });
-    html+='</div>';
+  }else{
+    html+='<div class="empty" style="padding:12px">No tasks detected for this user</div>';
   }
+  html+='</div>';
   grid.innerHTML=html||'<div class="empty">--</div>';
 }
 
