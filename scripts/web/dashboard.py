@@ -91,7 +91,7 @@ def public_server_configs(cfg):
             "port": int(merged.get("port", 22)),
             "username": merged.get("username", "root"),
             "auth": auth,
-            "host_key_policy": merged.get("host_key_policy") or "relaxed",
+            "host_key_policy": merged.get("host_key_policy") or "strict",
         })
     return rows
 
@@ -126,8 +126,8 @@ def add_server_config(cfg, payload):
         raise ValueError("port must be an integer") from exc
     if not 1 <= port <= 65535:
         raise ValueError("port must be between 1 and 65535")
-    requested_policy = str(payload.get("host_key_policy") or "relaxed").lower()
-    policy = normalize_host_key_policy("relaxed" if requested_policy == "off" else requested_policy)
+    requested_policy = str(payload.get("host_key_policy") or "strict").lower()
+    policy = normalize_host_key_policy(requested_policy)
 
     updated = copy.deepcopy(cfg or {})
     servers = updated.setdefault("servers", {})

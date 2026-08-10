@@ -27,9 +27,9 @@ def project_known_hosts_path() -> Path:
 
 
 def normalize_host_key_policy(value) -> str:
-    policy = "relaxed" if value in (None, "") else str(value).lower()
-    if policy not in {"relaxed", "accept-new", "strict"}:
-        raise ValueError("host_key_policy must be relaxed, accept-new, or strict")
+    policy = "strict" if value in (None, "") else str(value).lower()
+    if policy not in {"accept-new", "strict"}:
+        raise ValueError("host_key_policy must be accept-new or strict")
     return policy
 
 
@@ -51,9 +51,7 @@ def configure_host_key_policy(client, paramiko, host_key_policy=None) -> None:
     if known_hosts.exists():
         client.load_host_keys(str(known_hosts))
     policy = normalize_host_key_policy(host_key_policy)
-    if policy == "relaxed":
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    elif policy == "accept-new":
+    if policy == "accept-new":
         client.set_missing_host_key_policy(_accept_new_policy(paramiko))
     else:
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
@@ -74,7 +72,7 @@ def _key_filename(key_file: str | None, include_defaults=True) -> str | None:
 
 
 def connect_ssh(host, port, username, password=None, key_file=None, timeout=15, retries=3, host_key_policy=None):
-    """Connect using the configured host-key policy; defaults to relaxed compatibility mode."""
+    """Connect using the configured host-key policy; default to strict verification."""
     paramiko = require_paramiko()
     for attempt in range(retries):
         client = paramiko.SSHClient()

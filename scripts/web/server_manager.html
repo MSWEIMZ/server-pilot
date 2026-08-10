@@ -27,7 +27,7 @@
       <div class="field"><label for="username">用户名</label><input id="username" name="username" value="root" required></div>
       <div class="field"><label for="password">密码（可选）</label><input id="password" name="password" type="password" autocomplete="new-password"></div>
       <div class="field"><label for="key_file">私钥路径（可选）</label><input id="key_file" name="key_file" placeholder="C:\\Users\\...\\id_ed25519"></div>
-      <div class="field"><label for="host_key_policy">主机密钥校验</label><select id="host_key_policy" name="host_key_policy"><option value="relaxed">关闭（默认）</option><option value="accept-new">首次接受</option><option value="strict">严格校验</option></select></div>
+      <div class="field"><label for="host_key_policy">主机密钥校验</label><select id="host_key_policy" name="host_key_policy"><option value="strict" selected>严格校验（默认）</option><option value="accept-new">首次登记</option></select></div>
       <div class="field" style="justify-content:flex-end"><button class="submit" type="submit">新增服务器</button></div>
     </form>
   </section>

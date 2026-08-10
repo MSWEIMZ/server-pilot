@@ -55,8 +55,8 @@ class SecurityPrimitiveTests(unittest.TestCase):
         self.assertIsInstance(client.policy, Paramiko.RejectPolicy)
         self.assertTrue(str(project_known_hosts_path()).endswith("scripts\\known_hosts"))
 
-    def test_defaults_to_relaxed_host_key_policy(self):
-        self.assertEqual(normalize_host_key_policy(None), "relaxed")
+    def test_defaults_to_strict_host_key_policy(self):
+        self.assertEqual(normalize_host_key_policy(None), "strict")
 
     def test_configures_each_host_key_policy(self):
         class Client:
@@ -72,7 +72,6 @@ class SecurityPrimitiveTests(unittest.TestCase):
         class Paramiko:
             class AutoAddPolicy:
                 pass
-
             class RejectPolicy:
                 pass
 
@@ -80,7 +79,6 @@ class SecurityPrimitiveTests(unittest.TestCase):
                 pass
 
         expected = {
-            "relaxed": "AutoAddPolicy",
             "accept-new": "AcceptNewPolicy",
             "strict": "RejectPolicy",
         }

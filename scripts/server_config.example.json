@@ -1,16 +1,16 @@
 {
   "_comment": "Server Pilot configuration. Supports single-server and multi-server modes.",
-  "_host_key_policy": "SSH host-key policy: relaxed (default, auto-accept), accept-new (save first key), or strict (known keys only).",
+  "_host_key_policy": "SSH host-key policy: strict (default, known keys only); accept-new is an explicit bootstrap choice.",
   "_single_server": "For one server, use these top-level fields:",
   "host": "your-server.com",
   "port": 22,
   "username": "root",
-  "password": "your-password",
+  "password": "<stored-secret-not-for-commit>",
   "key_file": "",
-  "host_key_policy": "relaxed",
+  "host_key_policy": "strict",
   "_multi_server": "For multiple servers, use the 'servers' key below (remove top-level host/port/username/password):",
   "defaults": {
-    "host_key_policy": "relaxed"
+    "host_key_policy": "strict"
   },
   "servers": {
     "gpu-server": {
@@ -25,7 +25,7 @@
       "host": "train.example.com",
       "port": 26628,
       "username": "root",
-      "password": "your-password",
+      "password": "<stored-secret-not-for-commit>",
       "host_key_policy": "accept-new",
       "_note": "Password auth; saves the first host key to scripts/known_hosts"
     }

@@ -140,7 +140,7 @@ server-pilot/
 ## 🔐 Secure use
 
 - The canonical source and configuration directory on this machine is `C:\Users\WEI\server-pilot`; tool installations should link to it.
-- Set `host_key_policy` globally or per server: `relaxed` is the default (auto-accept, matching the former personal-use flow); `accept-new` saves the first key and rejects later changes; `strict` accepts only keys registered in the system store or `scripts/known_hosts`.
+- Set `host_key_policy` globally or per server: `strict` is the default and accepts only keys registered in the system store or `scripts/known_hosts`; `accept-new` is an explicit bootstrap mode that saves the first key and rejects later changes.
 - The dashboard listens on `127.0.0.1` by default. A LAN bind requires explicit `--bind 0.0.0.0 --allow-remote --token "long-random-token"`.
 - Run `powershell -ExecutionPolicy Bypass -File scripts\migrate_local_installations.ps1` for a dry run, then add `-Apply` to back up legacy directories/configurations and create Junctions.
 

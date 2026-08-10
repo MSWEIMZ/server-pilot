@@ -62,7 +62,7 @@ class DashboardServerManagementTests(unittest.TestCase):
             "port": 2222,
             "username": "bob",
             "password": "new-secret",
-            "host_key_policy": "off",
+            "host_key_policy": "strict",
         })
 
         self.assertEqual(len(updated["servers"]), 4)
