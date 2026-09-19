@@ -108,6 +108,16 @@ Three different timeouts exist and must not be confused:
   `[WARN] remote probe failed ...` and marks JSON coverage `DEGRADED`; an empty
   section then means "probe failed", not "no GPU / no process".
 - For work that must survive a client disconnect, still use `task_mgr.py run`
+- A **dropped connection** is not a normal exit: if the transport dies before
+  an exit status arrives, the tool raises `ConnectionError: SSH connection was
+  interrupted ...` instead of returning a silent `-1`. Treat that as a partial
+  result and re-run the read-only probe; never record it as a command result.
+- Sessions that die repeatedly are almost always one of: (a) a client-side
+  read timeout shorter than the command's silent gap, (b) a foreground
+  command outliving the SSH client, or (c) an idle NAT/firewall path dropping
+  a connection with no traffic. Check (a) with `--timeout none`, fix (b) with
+  `task_mgr.py run`, and for (c) rely on keepalive (15s, already enabled) and
+  prefer polling a detached job over holding one long channel open.
   or `nohup ... > log 2>&1 &` and poll the log; a longer timeout does not make
   a foreground command disconnect-proof.
 
@@ -146,6 +156,13 @@ python scripts/file_ops.py sync-down /remote/dir ./local/dir   # Download direct
 python scripts/file_ops.py diff /remote/file ./local/file      # Compare
 python scripts/file_ops.py big-upload ./big.zip /remote/big.zip   # Large file upload with progress and resume
 python scripts/file_ops.py big-download /remote/big.zip ./big.zip # Large file download with progress and resume
+
+`big-upload` / `big-download` only resume when the bytes already present are
+byte-identical to the source prefix; otherwise they restart from 0 and say so,
+and both verify the finished file by sha256. Never delete a partial file to
+"force" a resume -- a mismatched prefix is exactly the silent-corruption case
+these checks exist to catch. A non-zero exit from these commands means the
+content did not match and the destination must not be trusted.
 ```
 
 ## Background Tasks
