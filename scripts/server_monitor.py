@@ -14,7 +14,14 @@ Usage:
 
 import argparse, json, os, re, shlex, sys, io, time
 
-from security import connect_ssh, quote_remote_path, validate_pid
+from security import (
+    DEFAULT_PROBE_TIMEOUT,
+    connect_ssh,
+    describe_error,
+    exec_remote,
+    quote_remote_path,
+    validate_pid,
+)
 
 def load_config():
     p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_config.json")
@@ -32,12 +39,46 @@ def resolve_server(cfg, name=None):
 def _connect(host, port, user, pwd=None, key=None, retries=3, host_key_policy=None):
     return connect_ssh(host, port, user, pwd, key, retries=retries, host_key_policy=host_key_policy)
 
-def _cmd(ssh, c, t=15):
+_COMMAND_ERRORS = []
+_COMMAND_ERROR_LIMIT = 20
+
+
+def _record_command_error(command, exc):
+    """Remember failed probes instead of silently reporting "no data"."""
+    entry = {"command": command[:200], "error": describe_error(exc)}
+    _COMMAND_ERRORS.append(entry)
+    del _COMMAND_ERRORS[:-_COMMAND_ERROR_LIMIT]
+
+
+def take_command_errors():
+    """Return and clear the collected command errors."""
+    errors = list(_COMMAND_ERRORS)
+    _COMMAND_ERRORS.clear()
+    return errors
+
+
+def _cmd(ssh, c, t=None):
+    """Run a remote probe and return stripped stdout+stderr text.
+
+    ``t`` is a client-side read timeout in seconds; ``None`` (default) means
+    no timeout, so a slow or heavily loaded server is not mistaken for an
+    idle one.  Failures are recorded via :func:`_record_command_error` rather
+    than silently returning an empty string.
+    """
     try:
-        _, o, _ = ssh.exec_command(c, timeout=t)
-        return o.read().decode("utf-8", errors="replace").strip()
-    except Exception:
+        out, err, _ = exec_remote(ssh, c, read_timeout=t)
+        return (out + err).strip()
+    except Exception as exc:
+        _record_command_error(c, exc)
         return ""
+
+def _num(text, cast=float):
+    """Cast an nvidia-smi CSV cell, tolerating [N/A] and other placeholders."""
+    try:
+        return cast(text)
+    except (TypeError, ValueError):
+        return None
+
 
 def gpu_info(ssh):
     r = _cmd(ssh, "nvidia-smi --query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw,power.limit,fan.speed --format=csv,noheader,nounits")
@@ -46,10 +87,12 @@ def gpu_info(ssh):
     for l in r.split("\n"):
         p = [x.strip() for x in l.split(",")]
         if len(p) >= 7:
-            g = {"idx": int(p[0]), "name": p[1], "temp": int(p[2]), "util": int(p[3]),
-                 "mem_u": int(p[4]), "mem_t": int(p[5]), "pwr": float(p[6]),
-                 "pwr_max": float(p[7]) if len(p) > 7 else None, "fan": int(p[8]) if len(p) > 8 else None}
-            g["mem_pct"] = round(g["mem_u"] / g["mem_t"] * 100, 1) if g["mem_t"] > 0 else 0
+            g = {"idx": int(p[0]), "name": p[1], "temp": _num(p[2], int), "util": _num(p[3], int),
+                 "mem_u": _num(p[4], int), "mem_t": _num(p[5], int), "pwr": _num(p[6], float),
+                 "pwr_max": _num(p[7], float) if len(p) > 7 else None,
+                 "fan": _num(p[8], int) if len(p) > 8 else None}
+            mem_u, mem_t = g["mem_u"] or 0, g["mem_t"] or 0
+            g["mem_pct"] = round(mem_u / mem_t * 100, 1) if mem_t > 0 else 0
             out.append(g)
     return out
 
@@ -60,7 +103,10 @@ def gpu_procs(ssh):
     for l in r.split("\n"):
         parts = [s.strip() for s in l.split(",")]
         if len(parts) >= 3:
-            result.append({"pid": int(parts[0]), "name": parts[1], "vram": int(parts[2])})
+            pid, vram = _num(parts[0], int), _num(parts[2], int)
+            if pid is None:
+                continue
+            result.append({"pid": pid, "name": parts[1], "vram": vram or 0})
     return result
 
 def train_procs(ssh):
@@ -157,7 +203,7 @@ def inspect_log_source(ssh, pid):
         ssh,
         'printf "__STDOUT__\\n"; readlink /proc/' + pid_s + '/fd/1 2>/dev/null; '
         'printf "__STDERR__\\n"; readlink /proc/' + pid_s + '/fd/2 2>/dev/null',
-        t=5,
+        t=DEFAULT_PROBE_TIMEOUT,
     )
     targets = _marked_sections(targets_raw)
     stdout_target = targets.get("stdout", "")
@@ -182,7 +228,7 @@ def inspect_log_source(ssh, pid):
             '[ "$puid" = "$uid" ] || continue; '
             'cmd=$(tr \'\\0\' \' \' < "/proc/$p/cmdline" 2>/dev/null); '
             'printf "%s\\t%s\\n" "$p" "$cmd"; done',
-            t=8,
+            t=DEFAULT_PROBE_TIMEOUT,
         )
 
     source = resolve_log_source(stdout_target, stderr_target, pipe_peers)
@@ -192,7 +238,7 @@ def inspect_log_source(ssh, pid):
         exists = _cmd(
             ssh,
             "test -f " + quote_remote_path(source["path"]) + " && printf OK",
-            t=4,
+            t=DEFAULT_PROBE_TIMEOUT,
         )
         if exists.strip() != "OK":
             source.update({
@@ -211,7 +257,7 @@ def tail_process_log(ssh, pid, lines=30):
     raw = _cmd(
         ssh,
         "tail -n " + str(lines) + " -- " + quote_remote_path(source["path"]) + " 2>/dev/null",
-        t=8,
+        t=DEFAULT_PROBE_TIMEOUT,
     )
     if not raw:
         source["message"] = "log file exists but is currently empty"
@@ -255,12 +301,13 @@ def parse_logs(ssh, pid):
     return parse_log_text(raw)
 
 def sys_info(ssh):
-    return {k: _cmd(ssh, c, 5) for k, c in {
+    return {k: _cmd(ssh, c) for k, c in {
         "uptime": "uptime", "mem": "free -h", "load": "cat /proc/loadavg",
         "disk": "df -h / /root/autodl-tmp /home 2>/dev/null | sort -u"
     }.items()}
 
 def bar(u, t, w=20):
+    u = u or 0; t = t or 0
     p = u / t if t > 0 else 0; f = int(p * w)
     return "[" + "=" * f + " " * (w - f) + f"] {p*100:.0f}%"
 
@@ -271,10 +318,16 @@ def report(gpus, procs, sys_, logs=None):
     if gpus:
         print("\n  GPU:")
         for g in gpus:
-            icon = "!!" if g["util"] > 80 else "OK" if g["util"] > 0 else "--"
+            util = g["util"] or 0
+            icon = "!!" if util > 80 else "OK" if util > 0 else "--"
             print(f"  [{icon}] GPU {g['idx']}: {g['name']}")
-            print(f"      Temp: {g['temp']}C  Power: {g['pwr']}W/{g['pwr_max']}W  Fan: {g['fan']}%")
-            print(f"      Util: {g['util']}%  VRAM: {bar(g['mem_u'],g['mem_t'])} {g['mem_u']}/{g['mem_t']} MB")
+            temp = "N/A" if g["temp"] is None else f"{g['temp']}C"
+            pwr = "N/A" if g["pwr"] is None else f"{g['pwr']}W"
+            pwr_max = "N/A" if g["pwr_max"] is None else f"{g['pwr_max']}W"
+            fan = "N/A" if g["fan"] is None else f"{g['fan']}%"
+            print(f"      Temp: {temp}  Power: {pwr}/{pwr_max}  Fan: {fan}")
+            mem_u, mem_t = g["mem_u"] or 0, g["mem_t"] or 0
+            print(f"      Util: {util}%  VRAM: {bar(mem_u, mem_t)} {mem_u}/{mem_t} MB")
     if procs:
         print("\n  Training:")
         for p in procs:
@@ -328,6 +381,7 @@ def main():
     all_ = not (args.gpu or args.train or args.system)
 
     def run():
+        take_command_errors()  # discard errors from the previous watch cycle
         ssh = _connect(sc["host"], sc["port"], sc["user"], sc["pwd"], sc["key"], host_key_policy=sc["host_key_policy"])
         try:
             g = gpu_info(ssh) if (all_ or args.gpu) else []
@@ -338,10 +392,26 @@ def main():
                 for p in t:
                     li = parse_logs(ssh, p['pid'])
                     if li: lg[str(p['pid'])] = li
+            errors = take_command_errors()
             if args.json:
-                print(json.dumps({"gpus": g, "training": t, "logs": lg, "system": s}, indent=2, ensure_ascii=False))
+                payload = {"gpus": g, "training": t, "logs": lg, "system": s}
+                if errors:
+                    payload["command_errors"] = errors
+                    payload["coverage"] = "DEGRADED"
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
             else:
                 report(g, t, s, lg)
+                for entry in errors:
+                    print(
+                        f"  [WARN] remote probe failed: {entry['error']} :: {entry['command']}",
+                        file=sys.stderr,
+                    )
+                if errors:
+                    print(
+                        "  [WARN] coverage DEGRADED: empty sections above may mean "
+                        "'probe failed', not 'no data'.",
+                        file=sys.stderr,
+                    )
         finally:
             ssh.close()
 

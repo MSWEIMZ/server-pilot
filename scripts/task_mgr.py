@@ -25,7 +25,7 @@ import sys
 import io
 import time
 
-from security import connect_ssh
+from security import DEFAULT_PROBE_TIMEOUT, connect_ssh, describe_error, exec_remote
 
 try:
     import io
@@ -50,14 +50,17 @@ def resolve_server(cfg, name=None):
 def _connect(host, port, user, pwd=None, key=None, retries=3, host_key_policy=None):
     return connect_ssh(host, port, user, pwd, key, retries=retries, host_key_policy=host_key_policy)
 
-def _cmd(ssh, cmd, t=15):
+def _cmd(ssh, cmd, t=None):
+    """Run a remote command and return combined stdout+stderr text.
+
+    ``t`` is a client-side read timeout in seconds; ``None`` (default) means
+    no timeout, so slow commands are not aborted by the client.
+    """
     try:
-        _, o, e = ssh.exec_command(cmd, timeout=t)
-        out = o.read().decode("utf-8", errors="replace")
-        err = e.read().decode("utf-8", errors="replace")
+        out, err, _ = exec_remote(ssh, cmd, read_timeout=t)
         return out + err
     except Exception as e:
-        return f"Error: {e}"
+        return f"Error: {describe_error(e)}"
 
 def _upload_script(ssh, remote_path, content):
     """Write script content to a local temp file, then upload via SFTP."""
@@ -77,9 +80,9 @@ def _upload_script(ssh, remote_path, content):
 
 def detect_tool(ssh):
     """Detect available session tool: tmux > screen > nohup."""
-    if "tmux" in _cmd(ssh, "which tmux 2>/dev/null", t=3):
+    if "tmux" in _cmd(ssh, "which tmux 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT):
         return "tmux"
-    if "screen" in _cmd(ssh, "which screen 2>/dev/null", t=3):
+    if "screen" in _cmd(ssh, "which screen 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT):
         return "screen"
     return "nohup"
 
@@ -146,11 +149,11 @@ def list_tasks(ssh, log_dir="/tmp/sp_tasks"):
     _cmd(ssh, f"mkdir -p {log_dir}")
     
     # Check tmux sessions
-    tmux_out = _cmd(ssh, "tmux list-sessions 2>/dev/null | grep '^sp_'", t=5)
+    tmux_out = _cmd(ssh, "tmux list-sessions 2>/dev/null | grep '^sp_'", t=DEFAULT_PROBE_TIMEOUT)
     # Check screen sessions
-    screen_out = _cmd(ssh, "screen -ls 2>/dev/null | grep 'sp_'", t=5)
+    screen_out = _cmd(ssh, "screen -ls 2>/dev/null | grep 'sp_'", t=DEFAULT_PROBE_TIMEOUT)
     # Check nohup PIDs
-    pid_files = _cmd(ssh, f"ls {log_dir}/*.pid 2>/dev/null", t=5)
+    pid_files = _cmd(ssh, f"ls {log_dir}/*.pid 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT)
     
     tasks = []
     
@@ -161,8 +164,8 @@ def list_tasks(ssh, log_dir="/tmp/sp_tasks"):
             if parts:
                 session = parts[0].strip()
                 name = session.replace("sp_", "")
-                pid = _cmd(ssh, f"tmux list-panes -t {session} -F '#{{pane_pid}}' 2>/dev/null", t=3).strip()
-                alive = _cmd(ssh, f"ps -p {pid} -o pid= 2>/dev/null", t=3).strip() if pid else ""
+                pid = _cmd(ssh, f"tmux list-panes -t {session} -F '#{{pane_pid}}' 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT).strip()
+                alive = _cmd(ssh, f"ps -p {pid} -o pid= 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT).strip() if pid else ""
                 tasks.append({"name": name, "tool": "tmux", "pid": pid, "alive": bool(alive)})
     
     # Parse screen
@@ -180,8 +183,8 @@ def list_tasks(ssh, log_dir="/tmp/sp_tasks"):
             name = os.path.basename(pf).replace(".pid", "")
             # Skip if already found via tmux/screen
             if any(t["name"] == name for t in tasks): continue
-            pid = _cmd(ssh, f"cat {pf} 2>/dev/null", t=3).strip()
-            alive = _cmd(ssh, f"ps -p {pid} -o pid= 2>/dev/null", t=3).strip() if pid else ""
+            pid = _cmd(ssh, f"cat {pf} 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT).strip()
+            alive = _cmd(ssh, f"ps -p {pid} -o pid= 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT).strip() if pid else ""
             tasks.append({"name": name, "tool": "nohup", "pid": pid, "alive": bool(alive)})
     
     if not tasks:
@@ -203,7 +206,7 @@ def task_status(ssh, log_dir="/tmp/sp_tasks"):
     
     # Show GPU usage
     print("\n--- GPU ---")
-    gpu = _cmd(ssh, "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null", t=5)
+    gpu = _cmd(ssh, "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT)
     if gpu.strip():
         for line in gpu.strip().split("\n"):
             parts = [p.strip() for p in line.split(",")]
@@ -212,13 +215,13 @@ def task_status(ssh, log_dir="/tmp/sp_tasks"):
     
     # Show disk
     print("\n--- Disk ---")
-    disk = _cmd(ssh, "df -h / /root/autodl-tmp 2>/dev/null | sort -u", t=5)
+    disk = _cmd(ssh, "df -h / /root/autodl-tmp 2>/dev/null | sort -u", t=DEFAULT_PROBE_TIMEOUT)
     for line in disk.strip().split("\n"):
         if line.strip(): print(f"  {line}")
     
     # Show load
     print(f"\n--- Load ---")
-    load = _cmd(ssh, "uptime", t=5)
+    load = _cmd(ssh, "uptime", t=DEFAULT_PROBE_TIMEOUT)
     print(f"  {load.strip()}")
     return 0
 
@@ -227,7 +230,7 @@ def show_logs(ssh, name, lines=50, follow=False, log_dir="/tmp/sp_tasks"):
     """View task logs."""
     log_file = f"{log_dir}/{name}.log"
     
-    exists = _cmd(ssh, f"test -f {log_file} && echo OK", t=3).strip()
+    exists = _cmd(ssh, f"test -f {log_file} && echo OK", t=DEFAULT_PROBE_TIMEOUT).strip()
     if "OK" not in exists:
         print(f"Error: Log file not found: {log_file}", file=sys.stderr)
         return 1
@@ -238,20 +241,20 @@ def show_logs(ssh, name, lines=50, follow=False, log_dir="/tmp/sp_tasks"):
         try:
             last_size = 0
             while True:
-                size = _cmd(ssh, f"stat -c %s {log_file} 2>/dev/null || stat -f %z {log_file} 2>/dev/null", t=3).strip()
+                size = _cmd(ssh, f"stat -c %s {log_file} 2>/dev/null || stat -f %z {log_file} 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT).strip()
                 try:
                     size = int(size)
                 except:
                     size = 0
                 if size > last_size:
-                    new_content = _cmd(ssh, f"tail -c {size - last_size} {log_file}", t=5)
+                    new_content = _cmd(ssh, f"tail -c {size - last_size} {log_file}", t=DEFAULT_PROBE_TIMEOUT)
                     print(new_content, end="")
                     last_size = size
                 time.sleep(2)
         except KeyboardInterrupt:
             print("\nStopped following.")
     else:
-        content = _cmd(ssh, f"tail -{lines} {log_file}", t=10)
+        content = _cmd(ssh, f"tail -{lines} {log_file}", t=DEFAULT_PROBE_TIMEOUT)
         print(content, end="")
     return 0
 
@@ -260,21 +263,21 @@ def stop_task(ssh, name=None, stop_all=False, log_dir="/tmp/sp_tasks"):
     """Stop background task(s)."""
     if stop_all:
         # Stop all tmux sp_ sessions
-        sessions = _cmd(ssh, "tmux list-sessions 2>/dev/null | grep '^sp_' | cut -d: -f1", t=5)
+        sessions = _cmd(ssh, "tmux list-sessions 2>/dev/null | grep '^sp_' | cut -d: -f1", t=DEFAULT_PROBE_TIMEOUT)
         for s in sessions.strip().split("\n"):
             if s.strip():
                 _cmd(ssh, f"tmux kill-session -t {s.strip()} 2>/dev/null")
                 print(f"  Stopped tmux: {s.strip()}")
         
         # Stop all screen sp_ sessions
-        screens = _cmd(ssh, "screen -ls 2>/dev/null | grep 'sp_' | awk '{print $1}'", t=5)
+        screens = _cmd(ssh, "screen -ls 2>/dev/null | grep 'sp_' | awk '{print $1}'", t=DEFAULT_PROBE_TIMEOUT)
         for s in screens.strip().split("\n"):
             if s.strip():
                 _cmd(ssh, f"screen -X -S {s.strip()} quit 2>/dev/null")
                 print(f"  Stopped screen: {s.strip()}")
         
         # Stop all nohup PIDs
-        pids = _cmd(ssh, f"cat {log_dir}/*.pid 2>/dev/null", t=5)
+        pids = _cmd(ssh, f"cat {log_dir}/*.pid 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT)
         for pid in pids.strip().split("\n"):
             if pid.strip():
                 _cmd(ssh, f"kill {pid.strip()} 2>/dev/null")
@@ -294,7 +297,7 @@ def stop_task(ssh, name=None, stop_all=False, log_dir="/tmp/sp_tasks"):
     # Try screen
     _cmd(ssh, f"screen -X -S sp_{name} quit 2>/dev/null")
     # Try PID file
-    pid = _cmd(ssh, f"cat {log_dir}/{name}.pid 2>/dev/null", t=3).strip()
+    pid = _cmd(ssh, f"cat {log_dir}/{name}.pid 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT).strip()
     if pid:
         _cmd(ssh, f"kill {pid} 2>/dev/null")
         _cmd(ssh, f"rm -f {log_dir}/{name}.pid 2>/dev/null")

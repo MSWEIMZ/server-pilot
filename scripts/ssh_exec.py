@@ -18,7 +18,14 @@ import json
 import os
 import sys
 
-from security import connect_ssh
+from security import (
+    DEFAULT_CONNECT_TIMEOUT,
+    connect_ssh,
+    describe_error,
+    exec_remote,
+    normalize_read_timeout,
+    resolve_read_timeout,
+)
 
 def load_config():
     config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_config.json")
@@ -47,13 +54,20 @@ def resolve_server(config, server_name=None):
         "host_key_policy": config.get("host_key_policy", ""),
     }
 
-def run_command(host, port, username, password, key_file, command, timeout=30, host_key_policy=None):
-    ssh = connect_ssh(host, port, username, password, key_file, host_key_policy=host_key_policy)
+def run_command(host, port, username, password, key_file, command,
+                read_timeout=None, host_key_policy=None, connect_timeout=DEFAULT_CONNECT_TIMEOUT):
+    """Run one remote command.
+
+    ``read_timeout`` limits how long the client waits for channel output and
+    defaults to *unlimited*, so long commands are not aborted by a short
+    client-side timeout.  ``connect_timeout`` only bounds TCP/SSH handshake.
+    """
+    ssh = connect_ssh(
+        host, port, username, password, key_file,
+        timeout=connect_timeout, host_key_policy=host_key_policy,
+    )
     try:
-        stdin, stdout, stderr = ssh.exec_command(command, timeout=timeout)
-        out = stdout.read().decode("utf-8", errors="replace")
-        err = stderr.read().decode("utf-8", errors="replace")
-        exit_code = stdout.channel.recv_exit_status()
+        out, err, exit_code = exec_remote(ssh, command, read_timeout=read_timeout)
         return {"stdout": out, "stderr": err, "exit_code": exit_code}
     finally:
         ssh.close()
@@ -92,6 +106,16 @@ def list_servers(config):
         print(f"Single server mode: {host}")
         print("Tip: Use 'servers' key in server_config.json for multi-server support.")
 
+def parse_timeout_arg(value):
+    """argparse converter: seconds, or 0/none for an unlimited read timeout."""
+    if isinstance(value, str) and value.strip().lower() in {"none", "off", "unlimited"}:
+        return None
+    try:
+        return normalize_read_timeout(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def main():
     parser = argparse.ArgumentParser(description="SSH remote command executor")
     parser.add_argument("command", nargs="?", help="Command to execute")
@@ -101,7 +125,16 @@ def main():
     parser.add_argument("--user", help="SSH username")
     parser.add_argument("--pass", dest="password", help="SSH password")
     parser.add_argument("--key", dest="key_file", help="Path to SSH private key")
-    parser.add_argument("--timeout", type=int, default=30, help="Command timeout")
+    parser.add_argument(
+        "--timeout", type=parse_timeout_arg, default=None, metavar="SECONDS",
+        help="Client read timeout for the command channel. Default: no timeout "
+             "(long commands keep running). Use 0 or 'none' to force no timeout; "
+             "the SP_READ_TIMEOUT environment variable overrides this flag.",
+    )
+    parser.add_argument(
+        "--connect-timeout", type=float, default=DEFAULT_CONNECT_TIMEOUT,
+        metavar="SECONDS", help="TCP/SSH handshake timeout (default: 15)",
+    )
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--upload", nargs=2, metavar=("LOCAL", "REMOTE"), help="Upload file")
     parser.add_argument("--download", nargs=2, metavar=("REMOTE", "LOCAL"), help="Download file")
@@ -129,7 +162,10 @@ def main():
             result = download_file(host, port, username, password, key_file, args.download[0], args.download[1], host_key_policy)
             print(json.dumps(result, ensure_ascii=False) if args.json else result["message"])
         elif args.command:
-            result = run_command(host, port, username, password, key_file, args.command, args.timeout, host_key_policy)
+            result = run_command(
+                host, port, username, password, key_file, args.command,
+                args.timeout, host_key_policy, args.connect_timeout,
+            )
             if args.json:
                 print(json.dumps(result, ensure_ascii=False))
             else:
@@ -140,11 +176,13 @@ def main():
             parser.print_help()
             sys.exit(1)
     except Exception as e:
-        err_msg = str(e)
+        err_msg = describe_error(e)
         if "Authentication" in err_msg:
             print(f"Auth failed for {username}@{host}:{port}. Check password or SSH key.", file=sys.stderr)
-        elif "timed out" in err_msg.lower() or "connect" in err_msg.lower():
-            print(f"Cannot connect to {host}:{port}. Host may be down.", file=sys.stderr)
+        elif isinstance(e, TimeoutError) or "timed out" in err_msg.lower():
+            print(f"SSH Error: {err_msg}", file=sys.stderr)
+        elif "connect" in err_msg.lower():
+            print(f"Cannot connect to {host}:{port}. Host may be down. [{err_msg}]", file=sys.stderr)
         else:
             print(f"SSH Error: {err_msg}", file=sys.stderr)
         if args.json:

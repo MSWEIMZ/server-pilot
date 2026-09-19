@@ -22,3 +22,9 @@ Thumbs.db
 # Local Dashboard runtime logs
 dashboard.log
 dashboard-error.log
+dashboard.stdout.log
+dashboard.stderr.log
+
+# Local temp probe / encoding scratch files
+_tmp_*.py
+temp_b64.txt

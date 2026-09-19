@@ -78,7 +78,38 @@ When the user asks for all activity, combine task-manager records, the OS proces
 python scripts/ssh_exec.py "your command"     # Run any command
 python scripts/ssh_exec.py --download /remote/path ./local # Download
 python scripts/ssh_exec.py --list-servers     # List configured servers
+python scripts/ssh_exec.py --timeout 120 "slow command"    # Bounded read timeout
+python scripts/ssh_exec.py --connect-timeout 30 "command"  # Handshake timeout only
 ```
+
+### Command timeouts (important)
+
+Three different timeouts exist and must not be confused:
+
+| Timeout | Flag / setting | Default | Meaning |
+| --- | --- | --- | --- |
+| SSH connect | `--connect-timeout`, `connect_ssh(timeout=)` | 15s | TCP + SSH handshake only |
+| Channel read | `--timeout`, `_cmd(t=)`, `exec_remote(read_timeout=)` | **no timeout** | how long the client waits for the *next* chunk of channel data (idle, not total) |
+| Remote command | n/a | none | the remote process itself is never killed by this tool |
+
+- `--timeout` is **not** a command timeout. It only bounds client-side channel
+  reads; the remote process keeps running either way.
+- The read timeout measures **idleness, not total duration**: every chunk of
+  stdout/stderr restarts the clock, so a 40s command that prints every 8s
+  survives `--timeout 10`, while a command silent for 10s fails loudly.
+- The default is **no read timeout**, so a long build, `unittest discover`,
+  training log dump, or `grep` over a large tree will not be cut off.
+- `--timeout 0`, `--timeout none`, and `SP_READ_TIMEOUT=none` all mean
+  *unlimited*; `SP_READ_TIMEOUT=<seconds>` overrides `--timeout`.
+- Short status probes use a bounded 30s read timeout so a hung server fails
+  loudly instead of hanging the monitor forever.
+- A read timeout is reported as `TimeoutError: no channel data ...`, never as a
+  bare empty `SSH Error:`. If a probe fails, `server_monitor.py` prints
+  `[WARN] remote probe failed ...` and marks JSON coverage `DEGRADED`; an empty
+  section then means "probe failed", not "no GPU / no process".
+- For work that must survive a client disconnect, still use `task_mgr.py run`
+  or `nohup ... > log 2>&1 &` and poll the log; a longer timeout does not make
+  a foreground command disconnect-proof.
 
 ## Upload and Run (IMPORTANT)
 
@@ -165,6 +196,22 @@ Dashboard labels and counts must expose their data source and scope. Keep manage
 
 Use `--server name` to select: `python scripts/server_monitor.py --server gpu-box`
 See `scripts/server_config.example.json` for config format.
+
+## Long-Running Commands
+
+Never wrap a multi-minute remote command in a short client timeout. Prefer:
+
+```bash
+# 1. Detached, with both streams captured
+python scripts/ssh_exec.py "cd /path && setsid nohup python train.py > logs/train.log 2>&1 < /dev/null & echo STARTED"
+
+# 2. Poll without blocking
+python scripts/ssh_exec.py "tail -n 40 /path/logs/train.log"
+```
+
+Redirect **both** stdout and stderr (`> log 2>&1`). A background launch that
+captures only stdout loses the traceback, and a silent empty log then cannot be
+distinguished from an OOM kill.
 
 ## Training Log Parsing
 

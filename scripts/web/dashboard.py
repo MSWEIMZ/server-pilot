@@ -18,20 +18,31 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from server_monitor import load_config, resolve_server, _connect, _cmd, gpu_info, train_procs, parse_logs, sys_info, tail_process_log
-from security import clamp_log_lines, normalize_host_key_policy, quote_remote_path, validate_pid
+from security import (
+    DEFAULT_PROBE_TIMEOUT,
+    clamp_log_lines,
+    describe_error,
+    exec_remote,
+    normalize_host_key_policy,
+    quote_remote_path,
+    validate_pid,
+)
 
 # ── Enhanced _cmd wrapper with full PATH for container environments ──
 _PATH_PREFIX = 'export TERM=dumb; export PATH="$HOME/.local/bin:$HOME/.local/share/bin:$PATH"; '
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x07]*\x07')
 
-def _cmd_dash(ssh, c, t=15):
-    """Execute command with full user PATH (including ~/.local/bin)."""
+def _cmd_dash(ssh, c, t=DEFAULT_PROBE_TIMEOUT):
+    """Execute command with full user PATH (including ~/.local/bin).
+
+    ``t`` is a bounded client-side read timeout; a failed probe is surfaced
+    as a visible error string instead of silently looking like empty data.
+    """
     try:
-        _, o, _ = ssh.exec_command(_PATH_PREFIX + c, timeout=t)
-        raw = o.read().decode("utf-8", errors="replace").strip()
-        return _ANSI_RE.sub('', raw)
-    except Exception:
-        return ""
+        out, err, _ = exec_remote(ssh, _PATH_PREFIX + c, read_timeout=t)
+        return _ANSI_RE.sub('', (out + err).strip())
+    except Exception as exc:
+        return "ERROR: " + describe_error(exc)
 
 # ── Per-server state ──────────────────────────────────────────
 # Each server has its own: cached data, SSH connection cache, lock, wake event
@@ -238,8 +249,10 @@ def _get_ssh(st, srv):
     if cached_ssh:
         # Quick healthcheck
         try:
-            _, o, _ = cached_ssh.exec_command("echo alive", timeout=4)
-            if o.read().strip() == b"alive":
+            out, _err, _code = exec_remote(
+                cached_ssh, "echo alive", read_timeout=DEFAULT_PROBE_TIMEOUT
+            )
+            if out.strip() == "alive":
                 sc["time"] = now
                 return cached_ssh
         except Exception:
@@ -261,7 +274,7 @@ def _get_ssh(st, srv):
         )
     except Exception as e:
         st["lock"].acquire()
-        raise RuntimeError(f"SSH connect failed: {e}")
+        raise RuntimeError(f"SSH connect failed: {describe_error(e)}")
     st["lock"].acquire()
     st["ssh_cache"] = {"ssh": ssh, "host": host, "time": time.time()}
     return ssh
@@ -282,7 +295,7 @@ def get_procs(ssh):
     raw = _cmd(
         ssh,
         'ps -u "$(id -u)" --sort=-%cpu -o user,pid,%cpu,%mem,args | head -11',
-        t=5,
+        t=DEFAULT_PROBE_TIMEOUT,
     )
     out = []
     if raw:
@@ -293,7 +306,7 @@ def get_procs(ssh):
     return out
 
 def get_net(ssh):
-    raw = _cmd(ssh, "cat /proc/net/dev 2>/dev/null | grep -v lo | head -5", t=5)
+    raw = _cmd(ssh, "cat /proc/net/dev 2>/dev/null | grep -v lo | head -5", t=DEFAULT_PROBE_TIMEOUT)
     nets = []
     if raw:
         for l in raw.strip().split("\n"):
@@ -354,15 +367,15 @@ def get_tasks(ssh, procs):
     for p in procs:
         t = dict(p)
         t["description"] = describe_task(p.get("cmd", ""))
-        cwd = _cmd(ssh, f"readlink /proc/{p['pid']}/cwd 2>/dev/null", t=3)
+        cwd = _cmd(ssh, f"readlink /proc/{p['pid']}/cwd 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT)
         t["cwd"] = cwd if cwd else ""
-        status = _cmd(ssh, f"cat /proc/{p['pid']}/status 2>/dev/null | head -3", t=3)
+        status = _cmd(ssh, f"cat /proc/{p['pid']}/status 2>/dev/null | head -3", t=DEFAULT_PROBE_TIMEOUT)
         t["status"] = "running"
         if "zombie" in (status or "").lower():
             t["status"] = "zombie"
         elif "sleeping" in (status or "").lower():
             t["status"] = "sleeping"
-        mem_info = _cmd(ssh, f"cat /proc/{p['pid']}/status 2>/dev/null | grep -i vmrss", t=3)
+        mem_info = _cmd(ssh, f"cat /proc/{p['pid']}/status 2>/dev/null | grep -i vmrss", t=DEFAULT_PROBE_TIMEOUT)
         if mem_info:
             mm = re.search(r'(\d+)\s+kB', mem_info)
             if mm:
@@ -393,7 +406,7 @@ def get_process_log(ssh, pid, lines=100):
         "echo __STDERR__; readlink /proc/" + pid_s + "/fd/2 2>/dev/null; "
         "echo __END__"
     )
-    raw = _cmd(ssh, info_cmd, t=10)
+    raw = _cmd(ssh, info_cmd, t=DEFAULT_PROBE_TIMEOUT)
     sections = {}
     if raw:
         cur_key = None
@@ -431,12 +444,12 @@ def get_process_log(ssh, pid, lines=100):
         return not any(path.startswith(p) for p in dev_prefixes)
 
     if not stdout_text and _is_real_file(stdout_target):
-        content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(stdout_target) + " 2>/dev/null", t=8)
+        content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(stdout_target) + " 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT)
         if content and content.strip():
             stdout_text = "[stdout → " + stdout_target + "]\n" + content
 
     if _is_real_file(stderr_target) and stderr_target != log_source.get("path"):
-        content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(stderr_target) + " 2>/dev/null", t=8)
+        content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(stderr_target) + " 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT)
         if content and content.strip():
             stderr_text = "[stderr → " + stderr_target + "]\n" + content
 
@@ -483,7 +496,7 @@ def get_process_log(ssh, pid, lines=100):
             search_dirs.append(cwd)
 
         for sd in search_dirs:
-            raw = _cmd(ssh, "find " + quote_remote_path(sd) + " -maxdepth 4 \\( -name '*.log' -o -name '*.txt' -o -name '*.out' \\) -mmin -300 -type f -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -15", t=8)
+            raw = _cmd(ssh, "find " + quote_remote_path(sd) + " -maxdepth 4 \\( -name '*.log' -o -name '*.txt' -o -name '*.out' \\) -mmin -300 -type f -printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -15", t=DEFAULT_PROBE_TIMEOUT)
             if raw:
                 for lf in raw.strip().split("\n"):
                     parts = lf.split(" ", 1)
@@ -527,7 +540,7 @@ def get_process_log(ssh, pid, lines=100):
             chosen = candidates[0]
 
         if chosen:
-            content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(chosen) + " 2>/dev/null", t=8)
+            content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(chosen) + " 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT)
             if content and content.strip():
                 stdout_text = "[Log file: " + chosen + "]\n" + content
 
@@ -539,7 +552,7 @@ def get_process_log(ssh, pid, lines=100):
                 if "->" in line:
                     target = line.split("->")[-1].strip()
                     if target.endswith((".log", ".txt", ".out")) and _is_real_file(target):
-                        content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(target) + " 2>/dev/null", t=8)
+                        content = _cmd(ssh, "tail -" + str(lines) + " " + quote_remote_path(target) + " 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT)
                         if content and content.strip():
                             stdout_text = "[fd → " + target + "]\n" + content
                             break
@@ -871,7 +884,7 @@ def own_tasks_info(ssh):
         '-print -quit 2>/dev/null | grep -q .; then echo "$pid"; fi; '
         'done'
     )
-    return parse_own_tasks_output(_cmd_dash(ssh, command, t=15))
+    return parse_own_tasks_output(_cmd_dash(ssh, command, t=DEFAULT_PROBE_TIMEOUT))
 
 
 def _extract_experiment(command):
@@ -1025,7 +1038,7 @@ def gpu_occupancy_info(ssh):
         'printf "__CONTAINER_PROCESSES__\\n"; '
         'ps -eo user=,pid=,ppid=,pcpu=,rss=,etimes=,args= --sort=pid'
     )
-    return parse_gpu_occupancy_output(_cmd_dash(ssh, command, t=20))
+    return parse_gpu_occupancy_output(_cmd_dash(ssh, command, t=DEFAULT_PROBE_TIMEOUT))
 
 
 def parse_myjobs_output(raw):
@@ -1140,7 +1153,7 @@ def training_from_myjobs(myjobs, gpu_processes=None):
 
 def myjobs_info(ssh):
     """Run myjobs -d and parse output into structured data."""
-    raw = _cmd_dash(ssh, "myjobs -d 2>/dev/null", t=15)
+    raw = _cmd_dash(ssh, "myjobs -d 2>/dev/null", t=DEFAULT_PROBE_TIMEOUT)
     if not raw or "not found" in raw.lower() or "no such file" in raw.lower():
         return None
     result = parse_myjobs_output(raw)
@@ -1161,7 +1174,7 @@ def do_poll(name):
         try:
             ssh = _get_ssh(st, srv)
         except Exception as e:
-            st["cached"]["error"] = str(e)
+            st["cached"]["error"] = describe_error(e)
             st["cached"]["updated"] = time.time()
             st["cached"]["server_name"] = name
             _close_ssh(st)
@@ -1231,7 +1244,7 @@ def do_poll(name):
             }
     except Exception as e:
         with st["lock"]:
-            st["cached"]["error"] = str(e)
+            st["cached"]["error"] = describe_error(e)
             st["cached"]["updated"] = time.time()
             st["cached"]["server_name"] = name
             _close_ssh(st)

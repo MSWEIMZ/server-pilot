@@ -11,6 +11,114 @@ from pathlib import Path
 MAX_LOG_LINES = 1000
 
 
+DEFAULT_CONNECT_TIMEOUT = 15
+#: Bounded client-side read timeout for short status probes. Long enough to
+#: survive a heavily loaded server, short enough to fail loudly.
+DEFAULT_PROBE_TIMEOUT = 30
+READ_TIMEOUT_ENV = "SP_READ_TIMEOUT"
+_CHANNEL_CHUNK = 65536
+
+
+def describe_error(exc) -> str:
+    """Return a never-empty, human-readable description of an exception.
+
+    socket.timeout and several paramiko errors stringify to "", which used to
+    surface as a bare "SSH Error: " with no diagnostic value.
+    """
+    message = str(exc).strip()
+    name = type(exc).__name__
+    if message:
+        return name + ": " + message
+    return name + ": " + repr(exc)
+
+
+def normalize_read_timeout(value):
+    """Normalize a channel read timeout into seconds or None.
+
+    None, empty strings, none/off/unlimited and any value <= 0 mean NO
+    TIMEOUT. This is deliberately distinct from the SSH connect timeout.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"", "none", "off", "unlimited", "no", "false"}:
+            return None
+        value = text
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("timeout must be a number of seconds or 'none'") from exc
+    if seconds != seconds or seconds <= 0:
+        return None
+    return seconds
+
+
+def resolve_read_timeout(value=None, env_var=READ_TIMEOUT_ENV):
+    """Resolve a read timeout; SP_READ_TIMEOUT overrides value when set."""
+    env_value = os.environ.get(env_var)
+    if env_value is not None and env_value.strip() != "":
+        return normalize_read_timeout(env_value)
+    return normalize_read_timeout(value)
+
+
+def exec_remote(ssh, command, read_timeout=None, get_pty=False):
+    """Run command and return (stdout, stderr, exit_code) as text.
+
+    read_timeout bounds how long the client waits for channel data and is
+    unlimited by default, so long-running remote commands are not killed by a
+    short client-side read timeout. stdout and stderr are drained concurrently
+    so a command that fills the stderr window cannot deadlock.
+    """
+    timeout = resolve_read_timeout(read_timeout)
+    _stdin, stdout, stderr = ssh.exec_command(
+        command, timeout=timeout, get_pty=get_pty
+    )
+    channel = stdout.channel
+    out_chunks, err_chunks = [], []
+    # ``timeout`` bounds *idleness*, not total wall time: every chunk of
+    # stdout/stderr restarts the clock, so a long but chatty command (a
+    # build log, a test runner) is never cut off by its own duration.
+    last_data = time.monotonic()
+
+    while True:
+        got_data = False
+        if channel.recv_ready():
+            out_chunks.append(channel.recv(_CHANNEL_CHUNK))
+            got_data = True
+        if channel.recv_stderr_ready():
+            err_chunks.append(channel.recv_stderr(_CHANNEL_CHUNK))
+            got_data = True
+        if got_data:
+            last_data = time.monotonic()
+            continue
+        if channel.exit_status_ready():
+            break
+        if timeout is not None and time.monotonic() - last_data >= timeout:
+            raise TimeoutError(
+                "no channel data from remote command for %gs" % timeout
+            )
+        time.sleep(0.02)
+
+    grace_end = time.monotonic() + 0.5
+    while time.monotonic() < grace_end:
+        if channel.recv_ready():
+            out_chunks.append(channel.recv(_CHANNEL_CHUNK))
+        elif channel.recv_stderr_ready():
+            err_chunks.append(channel.recv_stderr(_CHANNEL_CHUNK))
+        else:
+            break
+
+    exit_code = channel.recv_exit_status()
+    return (
+        b"".join(out_chunks).decode("utf-8", errors="replace"),
+        b"".join(err_chunks).decode("utf-8", errors="replace"),
+        exit_code,
+    )
+
+
+
+
 def require_paramiko():
     try:
         import paramiko

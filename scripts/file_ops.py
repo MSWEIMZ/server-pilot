@@ -27,7 +27,7 @@ import subprocess
 import sys
 import tempfile
 
-from security import connect_ssh
+from security import DEFAULT_PROBE_TIMEOUT, connect_ssh, describe_error, exec_remote
 
 
 # Fix Windows console encoding
@@ -55,12 +55,17 @@ def resolve_server(cfg, name=None):
 def _connect(host, port, user, pwd=None, key=None, retries=3, host_key_policy=None):
     return connect_ssh(host, port, user, pwd, key, retries=retries, host_key_policy=host_key_policy)
 
-def _cmd(ssh, cmd, t=15):
+def _cmd(ssh, cmd, t=None):
+    """Run a remote command and return its combined text output.
+
+    ``t`` is a client-side read timeout in seconds; ``None`` (default) means
+    no timeout, so slow commands are not aborted by the client.
+    """
     try:
-        _, o, _ = ssh.exec_command(cmd, timeout=t)
-        return o.read().decode("utf-8", errors="replace")
+        out, err, _ = exec_remote(ssh, cmd, read_timeout=t)
+        return out + err
     except Exception as e:
-        return f"Error: {e}"
+        return f"Error: {describe_error(e)}"
 
 # ===== CAT =====
 def cat_file(ssh, remote_path, lines=0, tail=False):
@@ -69,7 +74,7 @@ def cat_file(ssh, remote_path, lines=0, tail=False):
         cmd = f"tail -{lines} '{remote_path}'" if tail else f"head -{lines} '{remote_path}'"
     else:
         cmd = f"cat '{remote_path}'"
-    content = _cmd(ssh, cmd, t=30)
+    content = _cmd(ssh, cmd, t=DEFAULT_PROBE_TIMEOUT)
     if not content.strip():
         # Check if file exists
         exists = _cmd(ssh, f"test -f '{remote_path}' && echo EXISTS || echo NOT_FOUND").strip()
@@ -91,7 +96,7 @@ def ls_dir(ssh, remote_path, tree=False, all_files=False):
     else:
         flags = "-la" if all_files else "-l"
         cmd = f"ls {flags} '{remote_path}' 2>/dev/null"
-    output = _cmd(ssh, cmd, t=15)
+    output = _cmd(ssh, cmd, t=DEFAULT_PROBE_TIMEOUT)
     if "No such file" in output or "cannot access" in output:
         print(f"Error: Directory not found: {remote_path}", file=sys.stderr)
         return 1
@@ -182,18 +187,18 @@ def search_files(ssh, remote_dir, pattern="*", grep_text=None, file_type=None, m
     if grep_text:
         # Pipe find results to grep
         cmd = f"{find_cmd} | head -500 | xargs grep -l '{grep_text}' 2>/dev/null | head -50"
-        output = _cmd(ssh, cmd, t=30)
+        output = _cmd(ssh, cmd, t=DEFAULT_PROBE_TIMEOUT)
         print(f"Files matching '{pattern}' containing '{grep_text}':")
         print(output, end="")
 
         # Also show matching lines
         cmd2 = f"{find_cmd} | head -500 | xargs grep -n '{grep_text}' 2>/dev/null | head -100"
-        output2 = _cmd(ssh, cmd2, t=30)
+        output2 = _cmd(ssh, cmd2, t=DEFAULT_PROBE_TIMEOUT)
         if output2.strip():
             print(f"\nMatching lines:")
             print(output2, end="")
     else:
-        output = _cmd(ssh, find_cmd, t=15)
+        output = _cmd(ssh, find_cmd, t=DEFAULT_PROBE_TIMEOUT)
         print(output, end="")
 
     return 0
@@ -257,7 +262,7 @@ def sync_down(ssh, sftp, remote_dir, local_dir):
     os.makedirs(local_dir, exist_ok=True)
 
     # Get file list
-    file_list = _cmd(ssh, f"find '{remote_dir}' -type f 2>/dev/null | head -1000", t=30)
+    file_list = _cmd(ssh, f"find '{remote_dir}' -type f 2>/dev/null | head -1000", t=DEFAULT_PROBE_TIMEOUT)
     files = [f.strip() for f in file_list.strip().split("\n") if f.strip()]
 
     downloaded = 0
