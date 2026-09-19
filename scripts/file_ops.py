@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 from security import DEFAULT_PROBE_TIMEOUT, connect_ssh, describe_error, exec_remote
 
