@@ -7,6 +7,7 @@ command that produced no output for 30s, and where the resulting
 import os
 import socket
 import sys
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -69,6 +70,14 @@ class FakeChannel:
         return self.exit_code
 
 
+class FakeTransport:
+    def __init__(self, active):
+        self._active = active
+
+    def is_active(self):
+        return self._active
+
+
 class FakeStdout:
     def __init__(self, channel):
         self.channel = channel
@@ -83,6 +92,10 @@ class FakeSSH:
         self.stderr = object()
         self.timeouts = []
         self.commands = []
+        self.transport_active = True
+
+    def get_transport(self):
+        return FakeTransport(self.transport_active)
 
     def exec_command(self, command, timeout=None, get_pty=False):
         self.commands.append(command)
@@ -224,6 +237,37 @@ class ErrorReportingTests(unittest.TestCase):
         message = file_ops._cmd(ssh, "ls /tmp")
         self.assertTrue(message.startswith("Error: "))
         self.assertGreater(len(message), len("Error: "))
+
+
+class InterruptedConnectionTests(unittest.TestCase):
+    """A dropped transport must not look like a clean exit code of -1."""
+
+    def _dropped_channel(self, ssh):
+        # Channel reached EOF (so the drain loop ends) but the transport
+        # died before any exit status arrived -- paramiko's -1 case.
+        channel = ssh.channel
+        channel.exit_code = -1
+        channel.exited = True
+        channel.status_event = threading.Event()  # never set: no exit status
+        channel.closed = True
+        ssh.transport_active = False
+        return channel
+
+    def test_dead_transport_without_exit_status_raises(self):
+        ssh = FakeSSH(out=b"partial output\n", exited=True)
+        self._dropped_channel(ssh)
+        with self.assertRaises(ConnectionError) as ctx:
+            security.exec_remote(ssh, "long cmd")
+        self.assertIn("interrupted", str(ctx.exception).lower())
+
+    def test_live_transport_without_exit_status_still_returns_minus_one(self):
+        # Some servers never send an exit status; keep the legacy -1 result.
+        ssh = FakeSSH(out=b"out\n", exited=True)
+        self._dropped_channel(ssh)
+        ssh.transport_active = True
+        out, err, code = security.exec_remote(ssh, "cmd")
+        self.assertEqual(code, -1)
+        self.assertEqual(out, "out\n")
 
 
 if __name__ == "__main__":

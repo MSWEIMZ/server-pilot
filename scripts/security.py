@@ -109,6 +109,24 @@ def exec_remote(ssh, command, read_timeout=None, get_pty=False):
         else:
             break
 
+    # A dropped transport closes the channel without ever delivering an exit
+    # status. paramiko then returns -1 from recv_exit_status(), which used to
+    # look exactly like a command that legitimately exited with -1: callers
+    # saw truncated output and no error. Only treat this as an interruption
+    # when the transport is actually gone, so servers that simply never send
+    # an exit status keep their previous -1 behaviour.
+    status_event = getattr(channel, "status_event", None)
+    got_status = status_event.is_set() if status_event is not None else True
+    transport = getattr(ssh, "get_transport", None)
+    transport = transport() if callable(transport) else None
+    transport_dead = transport is None or not transport.is_active()
+    if not got_status and transport_dead:
+        raise ConnectionError(
+            "SSH connection was interrupted before the remote command "
+            "returned an exit status; output above is partial (%d bytes)"
+            % sum(len(c) for c in out_chunks)
+        )
+
     exit_code = channel.recv_exit_status()
     return (
         b"".join(out_chunks).decode("utf-8", errors="replace"),
