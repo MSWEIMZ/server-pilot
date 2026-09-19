@@ -20,6 +20,7 @@ import argparse
 import datetime
 import difflib
 import filecmp
+import hashlib
 import json
 import os
 import shutil
@@ -373,17 +374,72 @@ class ProgressBar:
         print(f"\r  [{'='*30}] 100.0%  Done! ({avg:.1f} MB/s, {elapsed:.1f}s)")
 
 # ===== BIG UPLOAD =====
+def _local_prefix_digest(local_path, length):
+    """sha256 of the first ``length`` bytes of a local file (0 -> empty digest)."""
+    h = hashlib.sha256()
+    remaining = length
+    with open(local_path, "rb") as f:
+        while remaining > 0:
+            chunk = f.read(min(65536, remaining))
+            if not chunk:
+                break
+            h.update(chunk)
+            remaining -= len(chunk)
+    return h.hexdigest()
+
+
+def _remote_prefix_digest(sftp, remote_path, length):
+    """sha256 of the first ``length`` bytes of a remote file."""
+    h = hashlib.sha256()
+    remaining = length
+    with sftp.open(remote_path, "rb") as rf:
+        while remaining > 0:
+            chunk = rf.read(min(65536, remaining))
+            if not chunk:
+                break
+            h.update(chunk)
+            remaining -= len(chunk)
+    return h.hexdigest()
+
+
+def _resume_offset(sftp, local_path, remote_path, total):
+    """Decide how many bytes may safely be reused from an existing partial file.
+
+    A partial transfer may only be resumed when the bytes already present on the
+    destination are byte-identical to the same prefix of the source. Matching on
+    size alone is NOT sufficient: an unrelated file that merely happens to be
+    shorter would be extended from its own stale offset, silently producing a
+    corrupt mix of two files. When the prefix differs we restart from zero.
+    """
+    if not os.path.exists(local_path):
+        return 0, "no local file"
+    try:
+        other_size = sftp.stat(remote_path).st_size
+    except OSError:
+        return 0, "no existing remote file"
+    if other_size == 0:
+        return 0, "existing remote file is empty"
+    if other_size > total:
+        return 0, "existing remote file is longer than source; restarting from 0"
+    reuse = min(other_size, total)
+    if _local_prefix_digest(local_path, reuse) != _remote_prefix_digest(sftp, remote_path, reuse):
+        return 0, "existing bytes differ from source; restarting from 0"
+    if other_size == total:
+        return total, "existing file already matches"
+    return reuse, None
+
+
 def big_upload(ssh, local_path, remote_path):
     if not os.path.exists(local_path):
         print(f"Error: Not found: {local_path}", file=sys.stderr); return 1
     total = os.path.getsize(local_path)
     print(f"Uploading: {local_path} ({total/1048576:.1f} MB)")
     sftp = ssh.open_sftp()
-    rsize = 0
-    try: rsize = sftp.stat(remote_path).st_size
-    except: pass
+    rsize, note = _resume_offset(sftp, local_path, remote_path, total)
+    if note:
+        print(f"  {note}")
     if rsize >= total:
-        print("  Remote file exists, same size. Skipped."); sftp.close(); return 0
+        print(f"  Verified: {total} bytes (unchanged)"); sftp.close(); return 0
     if rsize > 0:
         print(f"  Resuming from {rsize/1048576:.1f} MB...")
     prog = ProgressBar(total)
@@ -400,13 +456,21 @@ def big_upload(ssh, local_path, remote_path):
                 transferred += len(chunk)
                 prog.update(transferred)
     prog.finish()
-    # Verify
+    # Verify the full file, not just its length.
     try:
         fsize = sftp.stat(remote_path).st_size
-        if fsize == total: print(f"  Verified: {fsize} bytes")
-        else: print(f"  Warning: size mismatch local={total} remote={fsize}")
-    except: pass
+        if fsize != total:
+            print(f"  Error: size mismatch local={total} remote={fsize}", file=sys.stderr)
+            sftp.close(); return 1
+        if _remote_prefix_digest(sftp, remote_path, total) != _local_prefix_digest(local_path, total):
+            print("  Error: content mismatch after upload", file=sys.stderr)
+            sftp.close(); return 1
+        print(f"  Verified: {fsize} bytes (sha256 match)")
+    except Exception as exc:
+        print(f"  Error: could not verify upload: {describe_error(exc)}", file=sys.stderr)
+        sftp.close(); return 1
     sftp.close(); return 0
+
 
 # ===== BIG DOWNLOAD =====
 def big_download(ssh, remote_path, local_path):
@@ -415,15 +479,17 @@ def big_download(ssh, remote_path, local_path):
     except FileNotFoundError:
         print(f"Error: Not found: {remote_path}", file=sys.stderr); sftp.close(); return 1
     print(f"Downloading: {remote_path} ({total/1048576:.1f} MB)")
-    lsize = os.path.getsize(local_path) if os.path.exists(local_path) else 0
+    lsize, note = _resume_offset(sftp, local_path, remote_path, total)
+    if note:
+        print(f"  {note}")
     if lsize >= total:
-        print("  Local file exists, same size. Skipped."); sftp.close(); return 0
+        print(f"  Verified: {total} bytes (unchanged)"); sftp.close(); return 0
     if lsize > 0:
         print(f"  Resuming from {lsize/1048576:.1f} MB...")
     prog = ProgressBar(total)
     prog.update(lsize)
     with open(local_path, "ab" if lsize > 0 else "wb") as f:
-        with sftp.open(remote_path, "r") as rf:
+        with sftp.open(remote_path, "rb") as rf:
             if lsize > 0: rf.seek(lsize)
             f.seek(lsize)
             transferred = lsize
@@ -435,8 +501,13 @@ def big_download(ssh, remote_path, local_path):
                 prog.update(transferred)
     prog.finish()
     fsize = os.path.getsize(local_path)
-    if fsize == total: print(f"  Verified: {fsize} bytes")
-    else: print(f"  Warning: size mismatch remote={total} local={fsize}")
+    if fsize != total:
+        print(f"  Error: size mismatch remote={total} local={fsize}", file=sys.stderr)
+        sftp.close(); return 1
+    if _local_prefix_digest(local_path, total) != _remote_prefix_digest(sftp, remote_path, total):
+        print("  Error: content mismatch after download", file=sys.stderr)
+        sftp.close(); return 1
+    print(f"  Verified: {fsize} bytes (sha256 match)")
     sftp.close(); return 0
 
 def main():
