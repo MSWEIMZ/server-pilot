@@ -17,13 +17,14 @@ except ImportError:
 from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from server_monitor import load_config, resolve_server, _connect, _cmd, gpu_info, train_procs, parse_logs, sys_info, tail_process_log
+from server_monitor import load_config, resolve_server, _connect, _cmd, _PoolSession, gpu_info, train_procs, parse_logs, sys_info, tail_process_log
 from security import (
     DEFAULT_PROBE_TIMEOUT,
     clamp_log_lines,
     describe_error,
     exec_remote,
     normalize_host_key_policy,
+    pooled_exec,
     quote_remote_path,
     validate_pid,
 )
@@ -39,7 +40,10 @@ def _cmd_dash(ssh, c, t=DEFAULT_PROBE_TIMEOUT):
     as a visible error string instead of silently looking like empty data.
     """
     try:
-        out, err, _ = exec_remote(ssh, _PATH_PREFIX + c, read_timeout=t)
+        if isinstance(ssh, _PoolSession):
+            out, err, _ = ssh.exec(_PATH_PREFIX + c, t=t)
+        else:
+            out, err, _ = exec_remote(ssh, _PATH_PREFIX + c, read_timeout=t)
         return _ANSI_RE.sub('', (out + err).strip())
     except Exception as exc:
         return "ERROR: " + describe_error(exc)
@@ -220,6 +224,7 @@ def _empty_cached(name=""):
 def _get_state(name):
     if name not in _server_states:
         _server_states[name] = {
+            "name": name,
             "cached": _empty_cached(name),
             "ssh_cache": {"ssh": None, "host": "", "time": 0},
             "lock": threading.Lock(),
@@ -231,35 +236,64 @@ def _get_state(name):
 
 # ── Per-server SSH management ────────────────────────────────
 def _get_ssh(st, srv):
-    """Get or create cached SSH connection for a server. Called under st['lock']."""
+    """Get or create a command-execution channel for a server.
+
+    Prefers the connection-pool daemon (no SSH handshake per poll cycle);
+    falls back to the original cached direct connection. Called under
+    st['lock'].
+    """
     host = srv.get("host", "")
     now = time.time()
     sc = st["ssh_cache"]
 
     cached_ssh = None
-    if sc["ssh"] and sc["host"] == host and now - sc["time"] < 120:
+    if sc["ssh"] and sc["host"] == host:
         cached_ssh = sc["ssh"]
-        try:
-            transport = cached_ssh.get_transport()
-            if not (transport and transport.is_active()):
+        if isinstance(cached_ssh, _PoolSession):
+            # Pool sessions stay valid indefinitely: daemon-side idle
+            # handling and the session's own lazy direct fallback cover
+            # liveness. No TTL or healthcheck needed.
+            return cached_ssh
+        if now - sc["time"] < 120:
+            try:
+                transport = cached_ssh.get_transport()
+                if not (transport and transport.is_active()):
+                    cached_ssh = None
+            except Exception:
                 cached_ssh = None
-        except Exception:
+        else:
             cached_ssh = None
 
-    if cached_ssh:
-        # Quick healthcheck
-        try:
-            out, _err, _code = exec_remote(
-                cached_ssh, "echo alive", read_timeout=DEFAULT_PROBE_TIMEOUT
-            )
-            if out.strip() == "alive":
-                sc["time"] = now
-                return cached_ssh
-        except Exception:
-            pass
-        st["ssh_cache"] = {"ssh": None, "host": "", "time": 0}
+        if cached_ssh:
+            # Quick healthcheck
+            try:
+                out, _err, _code = exec_remote(
+                    cached_ssh, "echo alive", read_timeout=DEFAULT_PROBE_TIMEOUT
+                )
+                if out.strip() == "alive":
+                    sc["time"] = now
+                    return cached_ssh
+            except Exception:
+                pass
+            st["ssh_cache"] = {"ssh": None, "host": "", "time": 0}
 
-    # Need new connection — release lock during slow connect
+    # Try the connection-pool daemon first: a probe round trip is a local
+    # call, and later polls reuse the daemon's persistent connection. The
+    # probing command ("true") is side-effect-free, so a daemon that goes
+    # silent mid-probe can simply be bypassed.
+    alias = st.get("name", "")
+    if alias:
+        try:
+            probe = pooled_exec(alias, "true", read_timeout=DEFAULT_PROBE_TIMEOUT)
+        except (TimeoutError, ConnectionError):
+            probe = None
+        if probe is not None:
+            st["ssh_cache"] = {
+                "ssh": _PoolSession(alias, srv), "host": host, "time": now,
+            }
+            return st["ssh_cache"]["ssh"]
+
+    # Need new direct connection — release lock during slow connect
     old_ssh = st["ssh_cache"]["ssh"]
     st["ssh_cache"] = {"ssh": None, "host": host, "time": 0}
     st["lock"].release()

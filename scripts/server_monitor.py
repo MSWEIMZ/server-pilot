@@ -19,25 +19,56 @@ from security import (
     connect_ssh,
     describe_error,
     exec_remote,
+    load_server_config as load_config,
+    pooled_exec,
     quote_remote_path,
+    resolve_server,
     validate_pid,
 )
 
-def load_config():
-    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_config.json")
-    return json.load(open(p)) if os.path.exists(p) else {}
-
-def resolve_server(cfg, name=None):
-    if name and "servers" in cfg:
-        s = cfg["servers"]
-        if name in s: return {**cfg.get("defaults", {}), **s[name]}
-        print(f"Error: Server '{name}' not found. Available: {', '.join(s.keys())}", file=sys.stderr); sys.exit(1)
-    return {"host": cfg.get("host", ""), "port": cfg.get("port", 22),
-            "username": cfg.get("username", "root"), "password": cfg.get("password", ""),
-            "key_file": cfg.get("key_file", ""), "host_key_policy": cfg.get("host_key_policy", "")}
-
 def _connect(host, port, user, pwd=None, key=None, retries=3, host_key_policy=None):
     return connect_ssh(host, port, user, pwd, key, retries=retries, host_key_policy=host_key_policy)
+
+class _PoolSession:
+    """Run probes through the connection-pool daemon, with a lazy direct fallback.
+
+    The pool daemon only carries command execution. When pooled_exec returns
+    None mid-run (daemon went away), a direct SSH connection is opened on
+    demand and used from then on, so behaviour degrades to the plain direct
+    path instead of failing.
+    """
+
+    def __init__(self, alias, sc):
+        self.alias = alias
+        self._sc = sc
+        self._ssh = None
+
+    def direct(self):
+        """Return a real SSH connection, connecting once on first use."""
+        if self._ssh is None:
+            sc = self._sc
+            self._ssh = _connect(sc["host"], sc["port"], sc["user"], sc["pwd"], sc["key"],
+                                 host_key_policy=sc["host_key_policy"])
+        return self._ssh
+
+    def close(self):
+        if self._ssh is not None:
+            self._ssh.close()
+
+
+def _open_session(sc, alias):
+    """Prefer the pool daemon; fall back to a direct connection when it is
+    unavailable (pooled_exec returned None). A live daemon reporting a hard
+    failure (e.g. server unreachable) raises, exactly like a failed _connect.
+    The probing command ("true") is side-effect-free, so a daemon that
+    accepted it and then went silent is safe to abandon (direct fallback)."""
+    try:
+        if pooled_exec(alias, "true", read_timeout=DEFAULT_PROBE_TIMEOUT) is not None:
+            return _PoolSession(alias, sc)
+    except (TimeoutError, ConnectionError):
+        pass
+    return _connect(sc["host"], sc["port"], sc["user"], sc["pwd"], sc["key"],
+                    host_key_policy=sc["host_key_policy"])
 
 _COMMAND_ERRORS = []
 _COMMAND_ERROR_LIMIT = 20
@@ -66,7 +97,15 @@ def _cmd(ssh, c, t=None):
     than silently returning an empty string.
     """
     try:
-        out, err, _ = exec_remote(ssh, c, read_timeout=t)
+        if isinstance(ssh, _PoolSession):
+            result = pooled_exec(ssh.alias, c, read_timeout=t)
+            if result is None:
+                # Daemon became unavailable mid-run: use the lazy direct path.
+                out, err, _ = exec_remote(ssh.direct(), c, read_timeout=t)
+            else:
+                out, err, _ = result
+        else:
+            out, err, _ = exec_remote(ssh, c, read_timeout=t)
         return (out + err).strip()
     except Exception as exc:
         _record_command_error(c, exc)
@@ -379,10 +418,12 @@ def main():
           "pwd": srv.get("password", ""), "key": srv.get("key_file", ""), "host_key_policy": srv.get("host_key_policy", "")}
     if not sc["host"]: print("Error: No host.", file=sys.stderr); sys.exit(1)
     all_ = not (args.gpu or args.train or args.system)
+    # Pool daemon alias: the --server name, or "default" for a flat config.
+    alias = args.server if (args.server and "servers" in cfg) else "default"
 
     def run():
         take_command_errors()  # discard errors from the previous watch cycle
-        ssh = _connect(sc["host"], sc["port"], sc["user"], sc["pwd"], sc["key"], host_key_policy=sc["host_key_policy"])
+        ssh = _open_session(sc, alias)
         try:
             g = gpu_info(ssh) if (all_ or args.gpu) else []
             t = train_procs(ssh) if (all_ or args.train or args.logs) else []

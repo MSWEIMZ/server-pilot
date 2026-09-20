@@ -23,45 +23,32 @@ from security import (
     connect_ssh,
     describe_error,
     exec_remote,
+    load_server_config as load_config,
+    msys_unconvert,
     normalize_read_timeout,
+    pooled_exec,
     resolve_read_timeout,
+    resolve_server,
 )
 
-def load_config():
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_config.json")
-    if os.path.exists(config_path):
-        with open(config_path, "r") as f:
-            return json.load(f)
-    return {}
-
-def resolve_server(config, server_name=None):
-    """Resolve server config. Supports multi-server configs."""
-    if server_name and "servers" in config:
-        servers = config["servers"]
-        if server_name in servers:
-            return {**config.get("defaults", {}), **servers[server_name]}
-        else:
-            available = ", ".join(servers.keys())
-            print(f"Error: Server '{server_name}' not found. Available: {available}", file=sys.stderr)
-            sys.exit(1)
-    # Fallback to flat config for backward compatibility
-    return {
-        "host": config.get("host", ""),
-        "port": config.get("port", 22),
-        "username": config.get("username", "root"),
-        "password": config.get("password", ""),
-        "key_file": config.get("key_file", ""),
-        "host_key_policy": config.get("host_key_policy", ""),
-    }
-
 def run_command(host, port, username, password, key_file, command,
-                read_timeout=None, host_key_policy=None, connect_timeout=DEFAULT_CONNECT_TIMEOUT):
+                read_timeout=None, host_key_policy=None, connect_timeout=DEFAULT_CONNECT_TIMEOUT,
+                alias=None):
     """Run one remote command.
 
     ``read_timeout`` limits how long the client waits for channel output and
     defaults to *unlimited*, so long commands are not aborted by a short
     client-side timeout.  ``connect_timeout`` only bounds TCP/SSH handshake.
+
+    ``alias`` is the server_config.json name; when set, the command is first
+    attempted through the connection-pool daemon and only falls back to the
+    direct connection below when the daemon answers "unavailable" (None).
     """
+    if alias is not None:
+        result = pooled_exec(alias, command, read_timeout=read_timeout)
+        if result is not None:
+            out, err, exit_code = result
+            return {"stdout": out, "stderr": err, "exit_code": exit_code}
     ssh = connect_ssh(
         host, port, username, password, key_file,
         timeout=connect_timeout, host_key_policy=host_key_policy,
@@ -140,6 +127,11 @@ def main():
     parser.add_argument("--download", nargs=2, metavar=("REMOTE", "LOCAL"), help="Download file")
     parser.add_argument("--list-servers", action="store_true", help="List servers")
     args = parser.parse_args()
+    # Undo Git Bash path rewriting on remote path arguments
+    if args.upload:
+        args.upload[1] = msys_unconvert(args.upload[1])
+    if args.download:
+        args.download[0] = msys_unconvert(args.download[0])
     config = load_config()
     if args.list_servers:
         list_servers(config)
@@ -154,6 +146,12 @@ def main():
     if not host:
         print("Error: No host. Use --host, --server, or configure server_config.json", file=sys.stderr)
         sys.exit(1)
+    # The pool daemon only knows server_config.json aliases; CLI connection
+    # overrides (--host/--port/--user/--pass/--key) may target a different
+    # machine, so they bypass the pool and keep the direct path.
+    alias = None
+    if not any((args.host, args.port, args.user, args.password, args.key_file)):
+        alias = args.server if (args.server and "servers" in config) else "default"
     try:
         if args.upload:
             result = upload_file(host, port, username, password, key_file, args.upload[0], args.upload[1], host_key_policy)
@@ -165,6 +163,7 @@ def main():
             result = run_command(
                 host, port, username, password, key_file, args.command,
                 args.timeout, host_key_policy, args.connect_timeout,
+                alias=alias,
             )
             if args.json:
                 print(json.dumps(result, ensure_ascii=False))

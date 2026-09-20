@@ -29,7 +29,11 @@ import sys
 import tempfile
 import time
 
-from security import DEFAULT_PROBE_TIMEOUT, connect_ssh, describe_error, exec_remote
+from security import (
+    DEFAULT_PROBE_TIMEOUT, connect_ssh, describe_error, exec_remote,
+    load_server_config as load_config, msys_unconvert, pooled_exec,
+    resolve_server,
+)
 
 
 # Fix Windows console encoding
@@ -40,22 +44,59 @@ try:
 except Exception:
     pass
 
-def load_config():
-    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_config.json")
-    return json.load(open(p)) if os.path.exists(p) else {}
-
-def resolve_server(cfg, name=None):
-    if name and "servers" in cfg:
-        s = cfg["servers"]
-        if name in s: return {**cfg.get("defaults", {}), **s[name]}
-        print(f"Error: Server '{name}' not found. Available: {', '.join(s.keys())}", file=sys.stderr)
-        sys.exit(1)
-    return {"host": cfg.get("host", ""), "port": cfg.get("port", 22),
-            "username": cfg.get("username", "root"), "password": cfg.get("password", ""),
-            "key_file": cfg.get("key_file", ""), "host_key_policy": cfg.get("host_key_policy", "")}
-
 def _connect(host, port, user, pwd=None, key=None, retries=3, host_key_policy=None):
     return connect_ssh(host, port, user, pwd, key, retries=retries, host_key_policy=host_key_policy)
+
+class _PoolSession:
+    """Command execution via the connection-pool daemon, with lazy direct fallback.
+
+    The daemon only carries command execution; SFTP work never goes through it.
+    When pooled_exec returns None mid-run (daemon went away), a direct SSH
+    connection is opened on demand and used from then on.
+    """
+
+    def __init__(self, alias, srv):
+        self.alias = alias
+        self._srv = srv
+        self._ssh = None
+
+    @classmethod
+    def try_create(cls, alias, srv):
+        """Return a session when the daemon answers a real round trip.
+
+        None means the daemon is unavailable: the caller keeps the original
+        direct-connect path. A live daemon reporting a hard failure (e.g.
+        server unreachable) raises, matching a failed direct _connect.
+        The probing command ("true") is side-effect-free, so a daemon that
+        accepted it and then went silent is safe to abandon: fall back to
+        direct instead of surfacing a pool-internal timeout.
+        """
+        try:
+            if pooled_exec(alias, "true", read_timeout=DEFAULT_PROBE_TIMEOUT) is None:
+                return None
+        except (TimeoutError, ConnectionError):
+            return None
+        return cls(alias, srv)
+
+    def direct(self):
+        """Return a real SSH connection, connecting once on first use."""
+        if self._ssh is None:
+            srv = self._srv
+            self._ssh = _connect(srv["host"], srv.get("port", 22), srv.get("username", "root"),
+                                 srv.get("password", ""), srv.get("key_file", ""),
+                                 host_key_policy=srv.get("host_key_policy", ""))
+        return self._ssh
+
+    def exec(self, cmd, t=None):
+        if self._ssh is None:
+            result = pooled_exec(self.alias, cmd, read_timeout=t)
+            if result is not None:
+                return result
+        return exec_remote(self.direct(), cmd, read_timeout=t)
+
+    def close(self):
+        if self._ssh is not None:
+            self._ssh.close()
 
 def _cmd(ssh, cmd, t=None):
     """Run a remote command and return its combined text output.
@@ -64,7 +105,10 @@ def _cmd(ssh, cmd, t=None):
     no timeout, so slow commands are not aborted by the client.
     """
     try:
-        out, err, _ = exec_remote(ssh, cmd, read_timeout=t)
+        if isinstance(ssh, _PoolSession):
+            out, err, _ = ssh.exec(cmd, t=t)
+        else:
+            out, err, _ = exec_remote(ssh, cmd, read_timeout=t)
         return out + err
     except Exception as e:
         return f"Error: {describe_error(e)}"
@@ -565,6 +609,11 @@ def main():
     pa.add_argument("--json", action="store_true", help="JSON output")
 
     args = pa.parse_args()
+    # Git Bash rewrites absolute POSIX-looking args (e.g. /home/x) to Windows
+    # paths; remote path arguments must be un-converted back.
+    for attr in ("path", "dir", "remote"):
+        if getattr(args, attr, None):
+            setattr(args, attr, msys_unconvert(getattr(args, attr)))
     if not args.command:
         pa.print_help()
         return 1
@@ -574,6 +623,26 @@ def main():
     if not srv.get("host"):
         print("Error: No host configured.", file=sys.stderr)
         return 1
+
+    # Pool daemon alias: the --server name, or "default" for a flat config.
+    alias = args.server if (args.server and "servers" in cfg) else "default"
+
+    # cat/ls/search only run remote commands: prefer the pool daemon and skip
+    # opening a local SSH/SFTP connection entirely. Commands that need SFTP
+    # (edit/sync-up/sync-down/diff/big-*) keep the direct path below; the pool
+    # only carries command execution, never file transfer.
+    if args.command in ("cat", "ls", "search"):
+        pool = _PoolSession.try_create(alias, srv)
+        if pool is not None:
+            try:
+                if args.command == "cat":
+                    return cat_file(pool, args.path, args.lines, args.tail)
+                elif args.command == "ls":
+                    return ls_dir(pool, args.path, args.tree, args.all)
+                elif args.command == "search":
+                    return search_files(pool, args.dir, args.name, args.grep, args.type, args.depth)
+            finally:
+                pool.close()
 
     ssh = _connect(srv["host"], srv.get("port", 22), srv.get("username", "root"),
                    srv.get("password", ""), srv.get("key_file", ""), host_key_policy=srv.get("host_key_policy", ""))

@@ -8,20 +8,14 @@ Usage:
 """
 import argparse, json, os, sys
 
-from security import connect_ssh, quote_remote_path
-
-def load_config():
-    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_config.json")
-    return json.load(open(p)) if os.path.exists(p) else {}
-
-def resolve_server(cfg, name=None):
-    if name and "servers" in cfg:
-        s = cfg["servers"]
-        if name in s: return {**cfg.get("defaults", {}), **s[name]}
-        print(f"Error: Server '{name}' not found.", file=sys.stderr); sys.exit(1)
-    return {"host": cfg.get("host", ""), "port": cfg.get("port", 22),
-            "username": cfg.get("username", "root"), "password": cfg.get("password", ""),
-            "key_file": cfg.get("key_file", ""), "host_key_policy": cfg.get("host_key_policy", "")}
+from security import (
+    connect_ssh,
+    load_server_config as load_config,
+    msys_unconvert,
+    pooled_exec,
+    quote_remote_path,
+    resolve_server,
+)
 
 def main():
     pa = argparse.ArgumentParser(description="Upload file to server and optionally run it")
@@ -32,6 +26,7 @@ def main():
     pa.add_argument("--python", default="/root/miniconda3/bin/python", help="Python interpreter on server")
     pa.add_argument("--server", "-s", help="Server name")
     a = pa.parse_args()
+    a.remote = msys_unconvert(a.remote)  # undo Git Bash path rewriting
 
     if not os.path.exists(a.local):
         print(f"Error: {a.local} not found", file=sys.stderr); return 1
@@ -59,6 +54,18 @@ def main():
         if a.run:
             cmd = f"{quote_remote_path(a.python)} {quote_remote_path(a.remote)} {a.args}".strip()
             print(f"Running: {cmd}")
+            # Prefer the pool daemon for command execution (SFTP upload above
+            # always uses the direct connection). None means the daemon is
+            # unavailable: fall through to the original direct streaming path.
+            alias = a.server if (a.server and "servers" in cfg) else "default"
+            pooled = pooled_exec(alias, cmd)
+            if pooled is not None:
+                out, err, exit_code = pooled
+                if out: print(out, end="")
+                if err: print(err, end="", file=sys.stderr)
+                if exit_code:
+                    print(f"\nExit code: {exit_code}", file=sys.stderr)
+                return exit_code
             _, stdout, stderr = ssh.exec_command(cmd, timeout=0)
             # Stream output in real-time
             import select

@@ -28,3 +28,10 @@ dashboard.stderr.log
 # Local temp probe / encoding scratch files
 _tmp_*.py
 temp_b64.txt
+
+# Per-machine local overrides (paths, tool locations)
+scripts/local_config.json
+
+# Local-only one-off scripts (may contain server paths/hosts)
+scripts/_*.sh
+scripts/watch_exp*.sh

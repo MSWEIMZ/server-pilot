@@ -10,7 +10,8 @@ description: "Remote server management via SSH. Use when the user types /server-
 When this skill is triggered (via /server-pilot or any server-related request):
 
 1. **Read config**: Read `scripts/server_config.json` to get server info
-2. **Choose the narrowest scope**: If the user names a server, GPU, experiment, task, PID, log, or path, inspect only that target. Run a full multi-server monitor only for a global resource overview or scheduling decision.
+2. **Ensure SSHFS mount**: Run `python scripts/sshfs_mount.py ensure --server <要操作的服务器>` — idempotent and fast. It mounts that server's home directory to a dedicated local drive (auto-assigned letters) if not mounted, refreshes that server's heartbeat, and ensures a shared idle watcher is running. After ~45 minutes with no skill activity on a server, only that server's drive is auto-unmounted. Other commands: `status`, `unmount --server <name>`, `unmount --all`. rclone binary/config/cache locations come from env vars or `scripts/local_config.json` (gitignored; keys: rclone_path, rclone_config, sshfs_cache_dir, known_hosts_file). Edit code directly on the mounted drive; builds and training always run on the server via SSH.
+3. **Choose the narrowest scope**: If the user names a server, GPU, experiment, task, PID, log, or path, inspect only that target. Run a full multi-server monitor only for a global resource overview or scheduling decision.
 3. **Connect and inspect**: Use the relevant targeted command. On Windows/PowerShell, set UTF-8 separately when needed; do not rely on the CMD-only `chcp 65001 & ...` form.
 4. **Start dashboard only when requested**: Do not launch a background dashboard for a status check or one-off command. Start it only when the user asks for the UI or a long-lived monitoring view.
 5. **If connection fails**: Report `UNKNOWN`; do not infer task failure or GPU availability, overwrite configuration, or bypass host-key verification.
@@ -82,7 +83,26 @@ python scripts/ssh_exec.py --timeout 120 "slow command"    # Bounded read timeou
 python scripts/ssh_exec.py --connect-timeout 30 "command"  # Handshake timeout only
 ```
 
+### Connection pool daemon (`scripts/sp_daemon.py`)
+
+All command-execution paths (`ssh_exec`, `server_monitor`, `task_mgr`, `file_ops` cat/ls/search, `upload_and_run --run`) first try a local pool daemon before opening a direct SSH connection:
+
+- **Lazy connect**: the daemon holds zero connections until a command actually targets a server. Configured-but-unused servers cost nothing.
+- **Reuse**: subsequent commands to the same server skip the handshake (~0.1s instead of ~0.7-3s).
+- **Auto-release**: a connection idle >30 min (env `SP_DAEMON_CONN_IDLE`) is closed; when no connections remain and no requests arrive for 30 min (env `SP_DAEMON_EXIT_IDLE`), the daemon exits entirely. The next command auto-respawns it.
+- **Fallback**: if the daemon is unavailable, scripts fall back to the original direct connection with identical behavior. If the daemon is running and reports a hard failure (e.g. server unreachable), that error is surfaced, NOT masked by a silent direct retry.
+- **Scope**: only command execution; SFTP transfers always use a direct connection.
+- Disable globally with `SP_POOL=off`.
+- Inspect: `python -c "import sys; sys.path.insert(0,'scripts'); import security; print(security.daemon_request({'op':'status'}))"` (from the server-pilot root); logs at `<daemon state dir>/daemon.log`.
+
 ### Command timeouts (important)
+
+> Git Bash note: MSYS rewrites absolute POSIX-looking arguments (e.g.
+> `/home/x` → `<git-root>/home/x`) before Python sees them. All remote path
+> arguments of these CLIs (file_ops paths, ssh_exec --upload/--download
+> remote side, upload_and_run remote target, task_mgr --workdir) are
+> auto-restored by `security.msys_unconvert`; command strings that take free
+> text are unaffected. From PowerShell/cmd nothing is rewritten anyway.
 
 Three different timeouts exist and must not be confused:
 
@@ -236,4 +256,4 @@ Parses `/proc/PID/fd` for: Epoch, Loss, Accuracy, Learning rate, Step, ETA
 
 ## Paths
 
-All `scripts/` paths are relative to the canonical source: `C:\Users\WEI\server-pilot\scripts\`.
+All `scripts/` paths are relative to the repository root (the directory containing this SKILL.md).
